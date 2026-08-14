@@ -1,0 +1,1633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>F&O Options Backtester</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 0; padding: 0;
+    background: #f4f6f8; color: #1a2332;
+  }
+  header {
+    background: linear-gradient(135deg, #1F3864 0%, #2E75B6 100%);
+    color: white; padding: 18px 28px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; opacity: 0.85; font-size: 13px; }
+  .container { display: grid; grid-template-columns: 340px 1fr; min-height: calc(100vh - 80px); }
+  .sidebar {
+    background: #fff; padding: 20px;
+    border-right: 1px solid #e0e6ed;
+    overflow-y: auto;
+  }
+  .main { padding: 20px; overflow-y: auto; }
+  h3 { margin: 18px 0 8px; color: #1F3864; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+  label { display: block; margin: 10px 0 4px; font-size: 13px; font-weight: 500; }
+  input[type=text], input[type=number], select {
+    width: 100%; padding: 8px 10px; font-size: 13px;
+    border: 1px solid #cfd8e3; border-radius: 4px;
+    background: #fff;
+  }
+  input[type=range] { width: 100%; }
+  .range-value { display: inline-block; min-width: 36px; text-align: right; font-weight: 600; color: #1F3864; }
+  .day-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 4px; }
+  .day-grid > div { text-align: center; }
+  .day-grid label { font-size: 11px; margin: 0; }
+  .day-grid select { padding: 4px; font-size: 11px; }
+  button {
+    width: 100%; padding: 12px; font-size: 14px; font-weight: 600;
+    background: #1F3864; color: white; border: none; border-radius: 4px;
+    cursor: pointer; margin-top: 16px;
+    transition: background 0.2s;
+  }
+  button:hover { background: #2E75B6; }
+  button:disabled { background: #aaa; cursor: not-allowed; }
+  .file-drop {
+    border: 2px dashed #cfd8e3; border-radius: 6px;
+    padding: 16px; text-align: center; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .file-drop:hover, .file-drop.dragover { background: #f0f6ff; border-color: #2E75B6; }
+  .file-drop p { margin: 4px 0; font-size: 12px; color: #6c7a89; }
+  .file-drop .file-name { color: #1F3864; font-weight: 600; font-size: 13px; }
+  .kpi-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    margin: 16px 0;
+  }
+  .kpi {
+    background: #fff; padding: 14px 16px; border-radius: 6px;
+    border-left: 4px solid #1F3864;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .kpi .label { font-size: 11px; color: #6c7a89; text-transform: uppercase; letter-spacing: 0.5px; }
+  .kpi .value { font-size: 22px; font-weight: 700; color: #1a2332; margin-top: 4px; }
+  .kpi .sub { font-size: 11px; color: #6c7a89; margin-top: 2px; }
+  .kpi.positive .value { color: #2CA02C; }
+  .kpi.negative .value { color: #D62728; }
+  /* StockMock-style results dashboard */
+  .dash-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 16px 0 22px; }
+  .card { background:#fff; border:1px solid #e3e8ef; border-radius:8px; padding:12px 14px; text-align:center; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+  .card .t { font-size:11.5px; color:#5b6776; font-weight:600; margin-bottom:6px; }
+  .card .v { font-size:19px; font-weight:700; color:#1a2332; }
+  .card .sub2 { font-size:10.5px; color:#8a93a0; margin-top:3px; }
+  .card.pos { background:#eaf8ee; border-color:#bfe6c9; } .card.pos .v { color:#1e8a3c; }
+  .card.neg { background:#fdeced; border-color:#f3c6ca; } .card.neg .v { color:#d62728; }
+  .card.amber { background:#fff7e6; border-color:#f3e2bb; } .card.amber .v { color:#b8860b; }
+  .card.est { background:#eef3fb; border-color:#cdddf3; } .card.est .v { color:#1F3864; }
+  @media (max-width: 1100px){ .dash-grid { grid-template-columns: repeat(3, 1fr); } }
+  .range-btns { display:flex; flex-wrap:wrap; gap:5px; margin:8px 0 4px; }
+  .range-btns button { flex:1 1 28%; padding:6px 0; font-size:12px; background:#eef3fb;
+    border:1px solid #cdddf3; border-radius:5px; cursor:pointer; color:#1F3864; font-weight:600; }
+  .range-btns button:hover { background:#1F3864; color:#fff; }
+  .time-row { display:flex; align-items:center; gap:6px; }
+  .time-row select { flex:1; }
+  .carry-row { display:flex; flex-direction:column; gap:5px; font-size:13px; margin:4px 0 2px; }
+  .carry-row label { font-weight:400; cursor:pointer; display:flex; align-items:flex-start; gap:6px; }
+  .chart-wrap {
+    background: #fff; padding: 16px; border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 16px;
+    position: relative; height: 340px;
+  }
+  .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+  .progress-bar { height: 8px; background: #e0e6ed; border-radius: 4px; overflow: hidden; margin-top: 8px; }
+  .progress-bar > div { height: 100%; width: 0%; background: #2E75B6; transition: width 0.2s; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    background: #fff;
+  }
+  th { background: #1F3864; color: #fff; text-align: left; padding: 8px; }
+  td { padding: 6px 8px; border-bottom: 1px solid #eef1f5; }
+  tr:nth-child(even) td { background: #f7f9fc; }
+  td.right { text-align: right; }
+  td.center { text-align: center; }
+  td.green { color: #2CA02C; font-weight: 600; }
+  td.red   { color: #D62728; font-weight: 600; }
+  .tabs { display: flex; border-bottom: 2px solid #cfd8e3; margin-top: 16px; }
+  .tabs button {
+    width: auto; background: none; color: #6c7a89; border: none;
+    padding: 10px 16px; font-size: 13px; margin: 0;
+    border-radius: 0; cursor: pointer; font-weight: 500;
+  }
+  .tabs button.active { color: #1F3864; border-bottom: 2px solid #1F3864; margin-bottom: -2px; }
+  .tab-content { display: none; padding: 16px 0; }
+  .tab-content.active { display: block; }
+  .empty {
+    text-align: center; padding: 60px 20px; color: #6c7a89;
+  }
+  .empty h2 { color: #1F3864; }
+  .info {
+    background: #eaf3ff; border-left: 4px solid #2E75B6;
+    padding: 10px 14px; border-radius: 4px; margin: 12px 0;
+    font-size: 13px; color: #1a2332;
+  }
+  .warn {
+    background: #fff4e0; border-left: 4px solid #f0a500;
+    padding: 10px 14px; border-radius: 4px; margin: 12px 0;
+    font-size: 13px; color: #5a4400;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📈 F&O Options Backtester</h1>
+  <p>NIFTY + SENSEX intraday short straddle — auto-loads historical + live Kite data, combined</p>
+</header>
+<div id="cloudStatus" style="padding:9px 28px;font-size:13px;background:#eef6ff;border-bottom:1px solid #d6e6fb;color:#1a2332">☁️ Checking cloud collector…</div>
+
+<div class="container">
+
+  <!-- ============ SIDEBAR ============ -->
+  <div class="sidebar">
+    <h3>📁 Data</h3>
+    <div class="file-drop" id="fileDrop">
+      <input type="file" id="fileInput" accept=".csv" style="display:none">
+      <p class="file-name" id="fileName">Click or drag CSV here</p>
+      <p>columns: instrument, datetime, spot, strike, ce_ltp, pe_ltp</p>
+    </div>
+    <div class="progress-bar" id="loadBar" style="display:none"><div></div></div>
+    <button id="coverageBtn" style="background:#2E75B6;margin-top:8px">📊 Data Coverage / Proof</button>
+
+    <h3>📅 Backtest Date Range</h3>
+    <label>From (click to pick a date)</label>
+    <input type="date" id="dateFrom">
+    <label>To (click to pick a date)</label>
+    <input type="date" id="dateTo">
+    <div class="range-btns">
+      <button type="button" data-months="1">1M</button>
+      <button type="button" data-months="3">3M</button>
+      <button type="button" data-months="6">6M</button>
+      <button type="button" data-months="12">1Y</button>
+      <button type="button" data-months="24">2Y</button>
+      <button type="button" data-months="36">3Y</button>
+      <button type="button" data-months="0">Max</button>
+    </div>
+
+    <h3>⚙️ Strategy</h3>
+    <label>Strategy</label>
+    <select id="strategy">
+      <option value="time_based" selected>Time-Based Short Straddle (sell at entry, exit at exit time)</option>
+      <option value="breakdown">Range Breakout (Sell Below Low, SL = High)</option>
+    </select>
+
+    <label>Expiry to trade</label>
+    <select id="expiryType">
+      <option value="nearest" selected>Weekly / Nearest</option>
+      <option value="monthly">Monthly</option>
+      <option value="next">Next (further out)</option>
+    </select>
+
+    <label>CE leg strike (relative to ATM)</label>
+    <select id="ceOffset">
+      <option value="0" selected>ATM</option>
+      <option value="1">ATM + 1</option><option value="-1">ATM − 1</option>
+      <option value="2">ATM + 2</option><option value="-2">ATM − 2</option>
+      <option value="3">ATM + 3</option><option value="-3">ATM − 3</option>
+      <option value="4">ATM + 4</option><option value="-4">ATM − 4</option>
+      <option value="5">ATM + 5</option><option value="-5">ATM − 5</option>
+    </select>
+    <label>PE leg strike (relative to ATM)</label>
+    <select id="peOffset">
+      <option value="0" selected>ATM</option>
+      <option value="1">ATM + 1</option><option value="-1">ATM − 1 (e.g. ATM−50 NIFTY)</option>
+      <option value="2">ATM + 2</option><option value="-2">ATM − 2</option>
+      <option value="3">ATM + 3</option><option value="-3">ATM − 3</option>
+      <option value="4">ATM + 4</option><option value="-4">ATM − 4</option>
+      <option value="5">ATM + 5</option><option value="-5">ATM − 5</option>
+    </select>
+    <p style="font-size:11px;color:#6c7a89;margin:2px 0 0">ATM is auto-picked from spot (both NIFTY & SENSEX). "−1" = one step below ATM (NIFTY −50, SENSEX/BankNifty −100). Data covers ATM ± 5.</p>
+
+    <div id="rangeFields" style="display:none">
+      <label>Reference window START</label>
+      <input type="text" id="refStart" value="09:20">
+      <label>Reference window END</label>
+      <input type="text" id="refEnd" value="10:03">
+    </div>
+
+    <div id="timeFields">
+      <label>Entry time — sell straddle</label>
+      <div class="time-row">
+        <select id="entryHour"></select> :
+        <select id="entryMin"></select>
+      </div>
+    </div>
+
+    <label>Exit time — square up</label>
+    <div class="time-row">
+      <select id="exitHour"></select> :
+      <select id="exitMin"></select>
+    </div>
+
+    <label>Position holding</label>
+    <div class="carry-row">
+      <label><input type="radio" name="carry" value="same"> Same Day (intraday — exit same day)</label>
+      <label><input type="radio" name="carry" value="nextday" checked> Next Day (BTST/STBT — carry overnight)</label>
+    </div>
+    <div id="carryExitWrap" style="display:none;margin-top:6px">
+      <label>Carry: square off the carried position next day at</label>
+      <div class="time-row">
+        <select id="carryExitHour"></select> :
+        <select id="carryExitMin"></select>
+      </div>
+      <span style="font-size:11px;color:#6c7a89">For an expiry rollover set 10:03 (hold to expiry-day morning, then the next day's own entry is your fresh trade). For a full overnight carry, set this to your exit time.</span>
+    </div>
+
+    <div id="slField">
+      <label>Stop Loss % per leg: <span class="range-value" id="slLabel">33</span>%</label>
+      <input type="range" id="slPct" min="10" max="60" value="33">
+    </div>
+    <div id="slNote" style="display:none;font-size:12px;color:#6c7a89;background:#eef3fb;border:1px solid #cdddf3;border-radius:6px;padding:8px 10px;margin:6px 0">
+      ℹ️ Range Breakout uses the <b>reference-window High as the stop-loss</b> — so the % stop-loss isn't used in this mode.
+    </div>
+
+    <label>Re-entry after SL is hit</label>
+    <select id="reentryMode">
+      <option value="none" selected>Off — exit on SL, done for the day</option>
+      <option value="original">Re-enter (Time-Based: at original price · Range Breakout: re-sell below the Low)</option>
+      <option value="newprice">Re-enter at NEW market price (Time-Based only)</option>
+    </select>
+
+    <label>Stop-loss on the re-entry</label>
+    <select id="reentrySL">
+      <option value="pct" selected>Fresh % from new entry (Time-Based)</option>
+      <option value="samesl">Same SL as first entry (Range Breakout: same High) — e.g. 100 stays 100</option>
+      <option value="newhigh">New high (highest premium seen so far)</option>
+    </select>
+
+    <label>Max re-entries per leg</label>
+    <input type="number" id="maxReentries" value="2" min="0" max="50" step="1">
+
+    <h3>💰 Costs</h3>
+    <label>Brokerage per lot per round-trip (₹)</label>
+    <input type="number" id="brokerage" value="1" min="0" step="1">
+    <label>Slippage (points)</label>
+    <input type="number" id="slippage" value="1" min="0" step="0.5">
+    <label>Number of lots</label>
+    <input type="number" id="lots" value="1" min="1" step="1">
+    <label>Capital / Margin for % returns (₹)</label>
+    <input type="number" id="capital" value="200000" min="10000" step="10000">
+
+    <h3>📅 Trading Days</h3>
+    <div class="day-grid">
+      <div><label>Mon</label>
+        <select data-day="0"><option value="NIFTY" selected>NIFTY (75)</option><option value="SENSEX">SENSEX (10)</option><option value="NIFTYBANK">BANKNIFTY (35)</option><option value="">skip</option></select>
+      </div>
+      <div><label>Tue</label>
+        <select data-day="1"><option value="NIFTY" selected>NIFTY (75)</option><option value="SENSEX">SENSEX (10)</option><option value="NIFTYBANK">BANKNIFTY (35)</option><option value="">skip</option></select>
+      </div>
+      <div><label>Wed</label>
+        <select data-day="2"><option value="NIFTY">NIFTY (75)</option><option value="SENSEX" selected>SENSEX (10)</option><option value="NIFTYBANK">BANKNIFTY (35)</option><option value="">skip</option></select>
+      </div>
+      <div><label>Thu</label>
+        <select data-day="3"><option value="NIFTY">NIFTY (75)</option><option value="SENSEX" selected>SENSEX (10)</option><option value="NIFTYBANK">BANKNIFTY (35)</option><option value="">skip</option></select>
+      </div>
+      <div><label>Fri</label>
+        <select data-day="4"><option value="NIFTY" selected>NIFTY (75)</option><option value="SENSEX">SENSEX (10)</option><option value="NIFTYBANK">BANKNIFTY (35)</option><option value="">skip</option></select>
+      </div>
+    </div>
+    <label style="display:flex;align-items:flex-start;gap:6px;font-weight:400;margin-top:8px;cursor:pointer">
+      <input type="checkbox" id="autoExpiry" checked> 🔄 Auto: each day, trade the index closest to its expiry (matches the real expiry calendar from history, and adapts if it changes)
+    </label>
+    <span style="font-size:11px;color:#6c7a89">When ON, the weekday grid above is the <b>candidate pool</b> and the actual instrument is chosen per-date from the data's expiry. When OFF, the grid is used as-is.</span>
+
+    <label style="display:flex;align-items:flex-start;gap:6px;font-weight:400;margin-top:8px;cursor:pointer">
+      <input type="checkbox" id="tradeAll"> 🔀 Test all candidate indices together (NIFTY + SENSEX + Bank Nifty) — both are traded each day and results are shown for each
+    </label>
+    <span style="font-size:11px;color:#6c7a89">Auto-enables when you pick <b>Monthly</b>. The "By Instrument" tab then shows NIFTY and SENSEX side by side.</span>
+
+    <button id="runBtn" disabled>🚀 Run Backtest</button>
+
+    <h3>🔍 Reference-Window Sweep</h3>
+    <span style="font-size:11px;color:#6c7a89">Range Breakout only. Keeps the window START fixed and tries every END from below up to your limit, then ranks which window made the most (or lost least) over the chosen dates.</span>
+    <div class="time-row" style="margin-top:6px">
+      <label style="font-weight:400;font-size:12px;flex:0 0 auto">END up to</label>
+      <input type="text" id="sweepUntil" value="11:45" style="flex:1">
+      <label style="font-weight:400;font-size:12px;flex:0 0 auto">step&nbsp;min</label>
+      <input type="number" id="sweepStep" value="1" min="1" max="30" style="flex:1">
+    </div>
+    <button id="sweepBtn" style="margin-top:6px;background:#5b2a86">🔍 Run Sweep</button>
+    <p id="status" style="font-size:12px;color:#6c7a89;margin-top:10px;text-align:center"></p>
+  </div>
+
+  <!-- ============ MAIN ============ -->
+  <div class="main" id="main">
+    <div class="empty">
+      <h2>👈 Load a CSV and click Run Backtest</h2>
+      <p>If you don't have data, use the synthetic CSV in this folder<br>(<code>nifty_sensex_option_data.csv</code>) — drag it into the box on the left.</p>
+      <div class="info" style="max-width:520px;margin:24px auto;text-align:left">
+        <strong>Strategy logic — Range Breakdown:</strong><br>
+        1. For each day, identify the chosen instrument (NIFTY or SENSEX)<br>
+        2. Lock ATM strike at REF_END time<br>
+        3. Compute CE/PE Low and High over [REF_START, REF_END]<br>
+        4. After REF_END: limit SELL at ref Low<br>
+        5. SL = ref High; on SL, wait for premium to fall back to Low and re-enter<br>
+        6. Exit at exit time
+      </div>
+      <div class="warn" style="max-width:520px;margin:0 auto;text-align:left">
+        <strong>Note:</strong> Brokerage applied per leg-trade (entry + exit round trip).
+        Slippage applied as points × lot size per leg-trade. Tune both to match your real costs.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// =============== STATE ===============
+let RAW_DATA = null;     // parsed CSV rows
+let GROUPED  = null;     // grouped by date->instrument->strike
+
+const DAY_MAP_DEFAULT = {0:"NIFTY",1:"NIFTY",2:"SENSEX",3:"SENSEX",4:"NIFTY"};
+const SPECS = {
+  NIFTY:     {lot:75,  step:50},
+  SENSEX:    {lot:20,  step:100},
+  NIFTYBANK: {lot:35,  step:100}
+};
+
+// Lot sizes CHANGED over the years. Use the right lot for the trade date so
+// historical P&L is sized correctly (e.g. NIFTY was 25, not 75, through 2025).
+// Schedule: [effective-until-date, lot]; first match wins; last entry = current.
+const LOT_HISTORY = {
+  NIFTY:     [['2021-07-22',75], ['2024-04-25',50], ['2025-12-26',25], ['2025-12-30',75], ['9999-12-31',75]],
+  SENSEX:    [['2024-07-19',10], ['9999-12-31',20]],
+  NIFTYBANK: [['2023-07-20',25], ['2024-11-19',15], ['9999-12-31',35]],
+};
+function lotFor(inst, date) {
+  const sched = LOT_HISTORY[inst];
+  if (!sched) return (SPECS[inst] ? SPECS[inst].lot : 0);
+  for (const [until, lot] of sched) if (date <= until) return lot;
+  return sched[sched.length - 1][1];
+}
+
+// The full master file is ~900 MB / 21M rows — too big to load fully in a browser.
+// Load only data on/after this date so the page stays fast and won't freeze.
+// Change this date to load more/less history. Set to '' to attempt everything
+// (will likely crash the tab on the full file). For full 11-year runs with no
+// limit, use the Python app instead:  streamlit run app.py
+const LOAD_FROM_DATE = '';   // recent_data.csv is already trimmed, so no extra filter
+
+// =============== UTILS ===============
+const fmt   = n => "₹" + Math.round(n).toLocaleString('en-IN');
+const fmt2  = n => Number(n).toFixed(2);
+const $     = id => document.getElementById(id);
+// Display dates as DD-MM-YYYY (data is stored YYYY-MM-DD)
+const fmtD  = s => { if (!s || s.length < 10) return s || ''; const p = s.slice(0,10).split('-'); return (p.length===3) ? `${p[2]}-${p[1]}-${p[0]}` : s; };
+
+function getDayMap() {
+  const map = {};
+  document.querySelectorAll('.day-grid select').forEach(sel => {
+    const d = parseInt(sel.dataset.day);
+    const v = sel.value;
+    if (v) map[d] = v;
+  });
+  return map;
+}
+
+// Candidate instruments for Auto mode = the distinct (non-skip) instruments chosen in the grid
+function getCandidateInsts() {
+  return [...new Set(Object.values(getDayMap()))];
+}
+
+// Auto-pick: among the candidate instruments, the one whose nearest expiry (>= date)
+// is soonest on this date — i.e. the index closest to its expiry. Data-driven, so it
+// automatically matches whatever the real expiry calendar was on that historical date.
+function pickByExpiry(date, candidates) {
+  let best = null, bestDays = Infinity;
+  for (const c of (candidates || [])) {
+    const g = GROUPED[date] && GROUPED[date][c];
+    if (!g) continue;
+    let nearest = null;
+    for (const s in g) for (const row of g[s]) {
+      if (row.exp && row.exp >= date && (nearest === null || row.exp < nearest)) nearest = row.exp;
+    }
+    if (nearest === null) continue;
+    const d = (new Date(nearest) - new Date(date)) / 86400000;
+    if (d < bestDays) { bestDays = d; best = c; }
+  }
+  return best;
+}
+
+function parseTime(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+// =============== FILE LOADING ===============
+const fileDrop = $('fileDrop');
+const fileInput = $('fileInput');
+fileDrop.addEventListener('click', () => fileInput.click());
+['dragover','dragenter'].forEach(e => fileDrop.addEventListener(e, ev => {
+  ev.preventDefault(); fileDrop.classList.add('dragover');
+}));
+['dragleave','drop'].forEach(e => fileDrop.addEventListener(e, ev => {
+  ev.preventDefault(); fileDrop.classList.remove('dragover');
+}));
+fileDrop.addEventListener('drop', ev => {
+  if (ev.dataTransfer.files.length) loadFile(ev.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', ev => {
+  if (ev.target.files.length) loadFile(ev.target.files[0]);
+});
+
+// =============== DATA INGEST (incremental + dedup) ===============
+// GROUPED[date][instrument][strike] = [{time, ce, pe, spot}, ...]
+// SEEN dedups by instrument|datetime|strike so the master file and the live
+// file can be merged without double-counting overlapping minutes.
+// Live is ingested FIRST, so live values win over historical for the same key.
+let SEEN = null;
+let totalRows = 0, droppedDup = 0;
+
+function resetData() {
+  GROUPED = {};
+  SEEN = new Set();
+  totalRows = 0;
+  droppedDup = 0;
+  RAW_DATA = null;
+}
+
+const OHLC_SEEN = new Set(); let OHLC_MODE = false;
+function ingestRow(r) {
+  if (!r || !r.datetime || !r.instrument) return;
+  const sp = String(r.datetime).split(' ');
+  if (sp.length < 2) return;
+  const date = sp[0];
+  if (LOAD_FROM_DATE && date < LOAD_FROM_DATE) return;   // skip old rows (browser memory)
+  const time = sp[1].slice(0,5);
+  const exp = r.expiry || '';
+  const bkey = r.instrument + '|' + date + ' ' + time + '|' + r.strike;
+  if (OHLC_MODE) { OHLC_SEEN.add(bkey); } else if (OHLC_SEEN.has(bkey)) { droppedDup++; return; }
+  const key = r.instrument + '|' + date + ' ' + time + '|' + r.strike + '|' + exp;
+  if (SEEN.has(key)) { droppedDup++; return; }
+  SEEN.add(key);
+  if (!GROUPED[date]) GROUPED[date] = {};
+  if (!GROUPED[date][r.instrument]) GROUPED[date][r.instrument] = {};
+  if (!GROUPED[date][r.instrument][r.strike]) GROUPED[date][r.instrument][r.strike] = [];
+  GROUPED[date][r.instrument][r.strike].push({ time, ce: r.ce_ltp, pe: r.pe_ltp, ce_h: r.ce_h, ce_l: r.ce_l, pe_h: r.pe_h, pe_l: r.pe_l, spot: r.spot, exp });
+  totalRows++;
+}
+
+// Keep only the NEAREST expiry per (date, instrument) — real intraday straddles
+// trade the nearest weekly. Without this, weekly + monthly premiums get mixed.
+function pruneToNearestExpiry() {
+  for (const date in GROUPED) {
+    for (const inst in GROUPED[date]) {
+      const exps = new Set();
+      for (const strike in GROUPED[date][inst])
+        for (const row of GROUPED[date][inst][strike])
+          if (row.exp) exps.add(row.exp);
+      if (!exps.size) continue;                 // live rows (no expiry) — leave as-is
+      const sorted = [...exps].sort();
+      const nearest = sorted.find(e => e >= date) || sorted[0];
+      for (const strike in GROUPED[date][inst]) {
+        const filtered = GROUPED[date][inst][strike].filter(r => !r.exp || r.exp === nearest);
+        if (filtered.length) GROUPED[date][inst][strike] = filtered;
+        else delete GROUPED[date][inst][strike];
+      }
+    }
+  }
+}
+
+// Choose which expiry to trade for a given day from the available list.
+function pickExpiry(exps, date, type) {
+  const future = exps.filter(e => e >= date);
+  const list = future.length ? future : exps;
+  if (!list.length) return null;
+  if (type === 'next') return list[1] || list[0];
+  if (type === 'monthly') {
+    // monthly = the nearest expiry that is the last one in its calendar month
+    for (const e of list) {
+      const ym = e.slice(0, 7);
+      if (!list.some(o => o > e && o.slice(0, 7) === ym)) return e;
+    }
+    return list[list.length - 1];
+  }
+  return list[0];   // nearest / weekly
+}
+
+function setBar(pct) {
+  const bar = $('loadBar');
+  if (!bar) return;
+  bar.style.display = (pct == null) ? 'none' : 'block';
+  if (pct != null) bar.firstElementChild.style.width = Math.min(100, pct) + '%';
+}
+
+// Manual drag/drop or file picker — replaces current data with the chosen file.
+function loadFile(file) {
+  resetData();
+  $('fileName').textContent = file.name + ' (loading...)';
+  $('status').textContent = 'Parsing CSV...';
+  setBar(0);
+  Papa.parse(file, {
+    header: true, dynamicTyping: true, skipEmptyLines: true, worker: true,
+    chunk: (res) => { for (const r of res.data) ingestRow(r); },
+    complete: () => { setBar(null); finishLoad(file.name); },
+    error: () => { setBar(null); $('status').textContent = 'Error parsing file.'; }
+  });
+}
+
+// Stream-parse a same-folder CSV by URL, ingesting incrementally.
+// Resolves true if the file existed and loaded, false if missing.
+function streamCsv(url, label) {
+  return new Promise((resolve) => {
+    fetch(url, { method: 'HEAD' }).then(h => {
+      if (!h.ok) { resolve(false); return; }
+      Papa.parse(url, {
+        download: true, header: true, dynamicTyping: true, skipEmptyLines: true,
+        chunkSize: 1024 * 1024 * 4,   // stream in 4 MB chunks
+        chunk: (res) => {
+          for (const r of res.data) ingestRow(r);
+          $('status').textContent = `Loading ${label}… ${totalRows.toLocaleString()} rows`;
+        },
+        complete: () => resolve(true),
+        error: () => resolve(false)
+      });
+    }).catch(() => resolve(false));
+  });
+}
+
+// =============== AUTO-LOAD on page open ===============
+// Combines BOTH files into one dataset:
+//   kite_live_data.csv            -> live ticks (loaded FIRST = preferred)
+//   nifty_sensex_option_data.csv  -> master historical (+ previously merged live)
+// Dedup by instrument|datetime|strike avoids double-counting overlap.
+const CLOUD_DATA_URL = 'http://168.144.122.216:8080/data/kite_live_data.csv';
+async function tryAutoLoad() {
+  resetData();
+  $('status').textContent = 'Auto-loading data…';
+  setBar(2);
+  // Live data: pull straight from the cloud (always fresh, no manual sync).
+  // Falls back to a local file if the cloud isn't reachable.
+  OHLC_MODE = true;
+  const loadedOhlc = await streamCsv('http://168.144.122.216:8080/data/kite_ohlc_data.csv', 'OHLC data (cloud)');
+  OHLC_MODE = false;
+  let loadedLive = await streamCsv(CLOUD_DATA_URL, 'live data (cloud)');
+  if (!loadedLive) loadedLive = await streamCsv('kite_live_data.csv', 'live data (local)');
+  setBar(45);
+  // Historical: prefer the cloud copy so this page works hosted anywhere; fall back to local file.
+  const CLOUD_HIST_URL = 'http://168.144.122.216:8080/data/recent_data.csv';
+  let loadedHist = await streamCsv(CLOUD_HIST_URL, 'historical (cloud)');
+  if (!loadedHist) loadedHist = await streamCsv('recent_data.csv', 'historical (local)');
+  setBar(70);
+  // 2025 backfill (Jan–Jul 2025). Local file only — large, so loaded last.
+  const loaded2025 = await streamCsv('master_2025.csv', 'historical 2025');
+  setBar(null);
+
+  if (!loadedLive && !loadedHist && !loaded2025) {
+    $('status').textContent = 'No data files found in this folder. Drop a CSV to load.';
+    return false;
+  }
+  const srcs = [loadedLive && 'live', loadedHist && 'historical', loaded2025 && '2025'].filter(Boolean).join(' + ');
+  finishLoad(srcs + ' (auto)');
+  setTimeout(() => { if ($('runBtn') && !$('runBtn').disabled) $('runBtn').click(); }, 300);
+  return true;
+}
+
+function finishLoad(sourceName) {
+  const dates = Object.keys(GROUPED).sort();
+  $('fileName').textContent = sourceName;
+  if (!dates.length) {
+    $('status').textContent = 'No usable rows found.';
+    $('runBtn').disabled = true;
+    return;
+  }
+  const dupNote = droppedDup ? ` · ${droppedDup.toLocaleString()} overlap rows merged` : '';
+  $('status').textContent = `Loaded ${totalRows.toLocaleString()} rows · ${dates.length} days (${dates[0]} → ${dates[dates.length-1]})${dupNote}`;
+  $('runBtn').disabled = false;
+  // default the date-range pickers to the full loaded span (only if still empty)
+  if (!$('dateFrom').value) $('dateFrom').value = dates[0];
+  if (!$('dateTo').value)   $('dateTo').value   = dates[dates.length-1];
+}
+
+// =============== CLOUD COLLECTOR STATUS ===============
+const CLOUD_STATUS_URL = 'http://168.144.122.216:8080/';
+async function checkCloudStatus() {
+  const el = $('cloudStatus');
+  if (!el) return;
+  try {
+    const r = await fetch(CLOUD_STATUS_URL, { cache: 'no-store' });
+    const s = await r.json();
+    const today = new Date().toISOString().slice(0, 10);
+    const feeds = [
+      ['Options (NIFTY/SENSEX/BankNifty)', s.options],
+      ['India VIX', s.vix],
+      ['NIFTY future', s.nifty_fut],
+      ['Stock futures', s.stock_futures],
+      ['Currency (USD/EUR/GBP/JPY)', s.currency],
+    ];
+    const optFresh = s.options && s.options.last === today;
+    let rows = '';
+    for (const [name, f] of feeds) {
+      const last = f && f.last ? f.last : '—';
+      const todayRows = f && f.today_rows ? f.today_rows.toLocaleString() : '0';
+      const ok = f && f.last === today;
+      rows += `<tr>
+        <td style="padding:2px 14px 2px 0">${name}</td>
+        <td style="padding:2px 14px;font-weight:600">${last}</td>
+        <td style="padding:2px 14px;text-align:right">${todayRows}</td>
+        <td style="padding:2px 0">${ok ? '✅' : '—'}</td></tr>`;
+    }
+    el.innerHTML =
+      `<div style="font-weight:700;margin-bottom:4px">☁️ Cloud collector — live status `
+      + `<span style="font-weight:400;color:#6c7a89">(server time ${s.server_time || ''}; auto-refresh on reload)</span></div>`
+      + `<table style="border-collapse:collapse;font-size:12.5px">`
+      + `<tr style="color:#6c7a89"><td>Feed</td><td style="padding:0 14px">Latest saved</td>`
+      + `<td style="padding:0 14px;text-align:right">Today's rows</td><td></td></tr>`
+      + rows + `</table>`;
+    el.style.background = optFresh ? '#e9f9ee' : '#fff4e0';
+  } catch (e) {
+    el.innerHTML = '☁️ Cloud collector — status not reachable right now. (It still collects on its 9 AM schedule; this banner just couldn\'t reach the status service.)';
+    el.style.background = '#fff4e0';
+  }
+}
+
+// =============== DATE PICKER + TIME DROPDOWNS ===============
+const pad2 = n => String(n).padStart(2, '0');
+
+function fillTimeSelects() {
+  for (const id of ['entryHour', 'exitHour', 'carryExitHour']) {
+    const sel = $(id); if (!sel) continue;
+    for (let h = 9; h <= 15; h++) sel.add(new Option(pad2(h), pad2(h)));
+  }
+  for (const id of ['entryMin', 'exitMin', 'carryExitMin']) {
+    const sel = $(id); if (!sel) continue;
+    for (let m = 0; m <= 59; m++) sel.add(new Option(pad2(m), pad2(m)));
+  }
+  $('entryHour').value = '10'; $('entryMin').value = '03';
+  $('exitHour').value = '15';  $('exitMin').value = '25';
+  if ($('carryExitHour')) { $('carryExitHour').value = '10'; $('carryExitMin').value = '03'; }
+}
+
+function dataDateSpan() {
+  const ds = Object.keys(GROUPED || {}).filter(Boolean).sort();
+  return ds.length ? [ds[0], ds[ds.length - 1]] : [null, null];
+}
+
+function wireRangeButtons() {
+  document.querySelectorAll('.range-btns button').forEach(b => {
+    b.addEventListener('click', () => {
+      const months = parseInt(b.dataset.months);
+      const [lo, hi] = dataDateSpan();
+      const to = $('dateTo').value || hi || new Date().toISOString().slice(0, 10);
+      if (months === 0) {                 // Max
+        if (lo) $('dateFrom').value = lo;
+        $('dateTo').value = to;
+      } else {
+        const d = new Date(to);
+        d.setMonth(d.getMonth() - months);
+        let from = d.toISOString().slice(0, 10);
+        if (lo && from < lo) from = lo;    // don't go before data starts
+        $('dateFrom').value = from;
+        $('dateTo').value = to;
+      }
+    });
+  });
+}
+
+// Show the carry-exit-time control only when "Next Day" is selected
+function wireCarryToggle() {
+  document.querySelectorAll('input[name=carry]').forEach(r => {
+    r.addEventListener('change', () => {
+      const nd = (document.querySelector('input[name=carry]:checked') || {}).value === 'nextday';
+      const w = $('carryExitWrap'); if (w) w.style.display = nd ? 'block' : 'none';
+    });
+  });
+}
+
+// Picking "Monthly" auto-enables testing both indices together (NIFTY + SENSEX)
+function wireMonthlyToggle() {
+  const e = $('expiryType');
+  if (e) e.addEventListener('change', ev => {
+    if (ev.target.value === 'monthly' && $('tradeAll')) $('tradeAll').checked = true;
+  });
+}
+
+// Trigger auto-load when page is ready
+window.addEventListener('DOMContentLoaded', () => {
+  fillTimeSelects();
+  wireRangeButtons();
+  wireCarryToggle();
+  wireMonthlyToggle();
+  checkCloudStatus();
+  tryAutoLoad();
+});
+
+// =============== STRATEGY DISPATCH ===============
+$('strategy').addEventListener('change', e => {
+  const v = e.target.value;
+  $('rangeFields').style.display = (v === 'breakdown') ? 'block' : 'none';
+  $('timeFields').style.display  = (v === 'time_based') ? 'block' : 'none';
+  // Range Breakout uses the ref-window High as the SL, so the % slider is hidden there
+  $('slField').style.display = (v === 'breakdown') ? 'none' : 'block';
+  $('slNote').style.display  = (v === 'breakdown') ? 'block' : 'none';
+  // Auto-set the re-entry to this strategy's defaults (re-sell at the Low, same High SL,
+  // re-enter every time). Dropdowns stay editable for manual override.
+  if (v === 'breakdown') {
+    $('reentryMode').value  = 'original';   // re-sell below the Low
+    $('reentrySL').value    = 'samesl';     // same High as SL every time
+    $('maxReentries').value = 50;           // effectively "every time"
+  }
+});
+
+$('slPct').addEventListener('input', e => $('slLabel').textContent = e.target.value);
+
+// =============== DATA COVERAGE / PROOF ===============
+async function showCoverage() {
+  const main = $('main');
+  main.innerHTML = '<div class="empty"><h2>Loading data coverage…</h2></div>';
+  let cov = null;
+  try {
+    const r = await fetch('data_coverage.json?_=' + Date.now());
+    if (r.ok) cov = await r.json();
+  } catch (e) {}
+
+  // What's currently loaded in this page (recent + live)
+  const loadedByInst = {};
+  if (GROUPED) {
+    for (const date in GROUPED)
+      for (const inst in GROUPED[date])
+        (loadedByInst[inst] = loadedByInst[inst] || []).push(date);
+  }
+  const loadedRows = Object.entries(loadedByInst).map(([k, v]) => {
+    const s = v.sort();
+    return `<tr><td><strong>${k}</strong></td><td class="center">${s.length}</td><td>${s[0]}</td><td>${s[s.length-1]}</td></tr>`;
+  }).join('');
+
+  let html = '<h2 style="color:#1F3864">📊 Data Coverage / Proof</h2>';
+
+  // ----- Day-level availability matrix: dates down the side, ✓ per feed, latest first -----
+  let pq = null;
+  try { const rr = await fetch('/coverage', { cache: 'no-store' }); if (rr.ok) pq = await rr.json(); } catch (e) {}
+  const sets = { NIFTY: new Set(), SENSEX: new Set(), NIFTYBANK: new Set() };
+  if (pq) for (const i in sets) (pq[i] || []).forEach(d => sets[i].add(d));
+  if (GROUPED) for (const date in GROUPED) for (const inst in GROUPED[date]) if (sets[inst]) sets[inst].add(date.slice(0, 10));
+  // Stocks + VIX (live feeds) — pull their collected dates from the cloud (VIX file is small)
+  const vixDates = new Set();
+  try {
+    const r = await fetch('http://168.144.122.216:8080/data/vix_live_data.csv', { cache: 'no-store' });
+    if (r.ok) { const t = await r.text(); t.split('\n').slice(1).forEach(l => { const d = l.slice(0, 10); if (/^\d{4}-\d{2}-\d{2}$/.test(d)) vixDates.add(d); }); }
+  } catch (e) {}
+  const allD = new Set();
+  for (const i in sets) sets[i].forEach(d => allD.add(d));
+  vixDates.forEach(d => allD.add(d));
+  if (allD.size) {
+    window._cov = { sets, vix: vixDates };
+    const years = [...new Set([...allD].map(d => d.slice(0, 4)))].sort().reverse();
+    const months = [['01','Jan'],['02','Feb'],['03','Mar'],['04','Apr'],['05','May'],['06','Jun'],['07','Jul'],['08','Aug'],['09','Sep'],['10','Oct'],['11','Nov'],['12','Dec']];
+    html += '<h3 style="color:#1F3864;margin-top:8px">🗓️ Data availability (☑ = collected)</h3>';
+    html += '<div style="margin:8px 0;font-size:14px">Year <select id="covYear" style="width:auto">' + years.map(y => `<option>${y}</option>`).join('')
+          + '</select> &nbsp; Month <select id="covMonth" style="width:auto">' + months.map(m => `<option value="${m[0]}">${m[1]}</option>`).join('') + '</select></div>';
+    html += '<div id="covGrid"></div>';
+  } else {
+    html += '<div class="warn">The availability map needs the data server running — restart so <code>data_server.py</code> starts, then click this again.</div>';
+  }
+
+  if (cov && cov.historical && Object.keys(cov.historical).length) {
+    html += `<p style="color:#6c7a89">Full stored history (master file). Snapshot: ${cov.generated || ''}</p>`;
+    html += '<table><thead><tr><th>Instrument</th><th class="center">Trading days stored</th><th>First date</th><th>Last date</th></tr></thead><tbody>';
+    for (const inst in cov.historical) {
+      const v = cov.historical[inst];
+      html += `<tr><td><strong>${inst}</strong></td><td class="center">${v.days.toLocaleString()}</td><td>${v.first}</td><td>${v.last}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  } else {
+    html += '<div class="warn">Full-history proof not built yet. Run <code>python data_coverage.py</code> once to generate it. Browser-loaded data shown below.</div>';
+  }
+
+  if (cov && cov.live) {
+    html += '<h3 style="color:#1F3864;margin-top:20px">📡 Live Kite data — daily save proof</h3>';
+    html += '<table><thead><tr><th>Feed</th><th class="center">Rows saved</th><th>First</th><th>Latest saved</th></tr></thead><tbody>';
+    for (const name in cov.live) {
+      const v = cov.live[name];
+      if (!v) { html += `<tr><td>${name}</td><td colspan="3" class="red">not found yet</td></tr>`; continue; }
+      html += `<tr><td>${name}</td><td class="center">${(v.rows || 0).toLocaleString()}</td><td>${v.first || '-'}</td><td class="green">${v.last || '-'}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  html += '<h3 style="color:#1F3864;margin-top:20px">🖥️ Currently loaded in this page (recent + live)</h3>';
+  html += '<table><thead><tr><th>Instrument</th><th class="center">Days</th><th>First</th><th>Last</th></tr></thead><tbody>'
+        + (loadedRows || '<tr><td colspan="4">nothing loaded</td></tr>') + '</tbody></table>';
+
+  main.innerHTML = html;
+  // wire the Year/Month picker and show the latest month with data
+  if ($('covYear') && window._cov) {
+    $('covYear').addEventListener('change', renderCovGrid);
+    $('covMonth').addEventListener('change', renderCovGrid);
+    let latest = '';
+    for (const i in window._cov.sets) for (const d of window._cov.sets[i]) if (d > latest) latest = d;
+    for (const d of window._cov.vix) if (d > latest) latest = d;
+    if (latest) { $('covYear').value = latest.slice(0, 4); $('covMonth').value = latest.slice(5, 7); }
+    renderCovGrid();
+  }
+}
+
+// Render the day-level checkbox grid for the selected Year + Month
+function renderCovGrid() {
+  const c = window._cov; const g = $('covGrid'); if (!c || !g) return;
+  const prefix = $('covYear').value + '-' + $('covMonth').value;
+  const all = new Set();
+  for (const i in c.sets) c.sets[i].forEach(d => { if (d.indexOf(prefix) === 0) all.add(d); });
+  c.vix.forEach(d => { if (d.indexOf(prefix) === 0) all.add(d); });
+  const dates = [...all].sort().reverse();
+  if (!dates.length) { g.innerHTML = `<p style="color:#6c7a89">No data for ${prefix}.</p>`; return; }
+  const tk = on => on ? '<span style="color:#1e7e34;font-size:15px">☑</span>' : '<span style="color:#ccc;font-size:15px">☐</span>';
+  let h = '<table><thead><tr><th>Date</th><th class="center">Nifty</th><th class="center">Sensex</th><th class="center">Stocks</th><th class="center">Nifty Bank</th><th class="center">VIX</th></tr></thead><tbody>';
+  for (const d of dates)
+    h += `<tr><td>${fmtD(d)}</td><td class="center">${tk(c.sets.NIFTY.has(d))}</td><td class="center">${tk(c.sets.SENSEX.has(d))}</td><td class="center">${tk(c.vix.has(d))}</td><td class="center">${tk(c.sets.NIFTYBANK.has(d))}</td><td class="center">${tk(c.vix.has(d))}</td></tr>`;
+  h += '</tbody></table>';
+  g.innerHTML = h;
+}
+$('coverageBtn').addEventListener('click', showCoverage);
+
+// =============== BACKTEST CORE ===============
+function runLegBreakdown(legSeries, refLow, refHigh, premKey, lot, opts) {
+  opts = opts || {};
+  const reOn  = (opts.reentryMode && opts.reentryMode !== 'none');   // re-enter when premium falls back below Low
+  const reSL  = opts.reentrySL || 'samesl';                          // 'newhigh' -> SL = running high ; else same High
+  const maxRe = (opts.maxReentries == null) ? 0 : opts.maxReentries;
+  const trades = [];
+  let inPos = false, et = null, ep = refLow, fills = 0, reentries = 0, high = refHigh, slLevel = refHigh;
+  for (let i = 0; i < legSeries.length; i++) {
+    const r = legSeries[i];
+    const cp = r[premKey];
+    const hp = (r[premKey + '_h'] != null ? r[premKey + '_h'] : cp);
+    const lp = (r[premKey + '_l'] != null ? r[premKey + '_l'] : cp);
+    if (hp > high) high = hp;
+    const isLast = (i === legSeries.length - 1);
+    if (inPos) {
+      if (hp >= slLevel) {                                  // stop-loss (the High) hit
+        trades.push({reason:'SL', et, ep, xt:r.time, xp:slLevel, pnl:(ep - slLevel) * lot, fills});
+        inPos = false;
+        if (!reOn || reentries >= maxRe) break;             // no re-entry -> done
+      } else if (isLast) {
+        trades.push({reason:'EOD', et, ep, xt:r.time, xp:cp, pnl:(ep - cp) * lot, fills});
+        break;
+      }
+    } else {
+      if (lp <= refLow) {                                   // premium fell back below Low -> (re-)sell
+        if (fills > 0) reentries++;                          // first fill isn't a re-entry
+        inPos = true; et = r.time; ep = refLow; fills++;
+        slLevel = (reSL === 'newhigh') ? high : refHigh;     // same High (e.g. 100 stays 100) or trail to new high
+      }
+      if (isLast) break;
+    }
+  }
+  return trades;
+}
+
+function runLegPctSL(legSeries, premKey, sl_pct, lot, opts) {
+  if (!legSeries.length) return [];
+  opts = opts || {};
+  const reMode = opts.reentryMode || 'none';   // 'none' | 'original' | 'newprice'
+  const reSL   = opts.reentrySL   || 'pct';    // 'pct' | 'samesl' | 'newhigh'
+  const maxRe  = (opts.maxReentries == null) ? 0 : opts.maxReentries;
+  const trades = [];
+  const orig   = legSeries[0][premKey];
+  const origSL = orig * (1 + sl_pct);
+  const last   = legSeries[legSeries.length - 1];
+  let inPos = true, et = legSeries[0].time, ep = orig, slP = origSL, fills = 1, reentries = 0, high = orig;
+  for (let i = 1; i < legSeries.length; i++) {
+    const r = legSeries[i];
+    const cp = r[premKey];
+    const hp = (r[premKey + '_h'] != null ? r[premKey + '_h'] : cp);
+    const lp = (r[premKey + '_l'] != null ? r[premKey + '_l'] : cp);
+    if (hp > high) high = hp;
+    const isLast = (i === legSeries.length - 1);
+    if (inPos) {
+      if (hp >= slP) {                                   // stop-loss hit -> exit (loss)
+        trades.push({reason:'SL', et, ep, xt:r.time, xp:slP, pnl:(ep - slP) * lot, fills});
+        inPos = false;
+        if (reMode === 'none' || reentries >= maxRe) break;   // no re-entry -> done
+      } else if (isLast) {                               // square off at exit time
+        trades.push({reason:'EOD', et, ep, xt:r.time, xp:cp, pnl:(ep - cp) * lot, fills});
+        inPos = false; break;
+      }
+    } else {                                             // flat -> look to re-enter
+      let newEp = null;
+      if (reMode === 'original') { if (lp <= orig) newEp = orig; }   // wait for premium to return to original
+      else if (reMode === 'newprice') { newEp = cp; }                // re-enter at current market price
+      if (newEp !== null && reentries < maxRe) {
+        reentries++; inPos = true; et = r.time; ep = newEp; fills++;
+        // stop-loss for this re-entry
+        slP = (reSL === 'samesl') ? origSL
+            : (reSL === 'newhigh') ? high
+            : newEp * (1 + sl_pct);                       // 'pct' = fresh % from new entry
+      }
+    }
+  }
+  // close any still-open position at the last bar (e.g. re-entered on the final minute)
+  if (inPos) trades.push({reason:'EOD', et, ep, xt:last.time, xp:last[premKey], pnl:(ep - last[premKey]) * lot, fills});
+  return trades;
+}
+
+function runBacktest(params) {
+  let carrySkips = 0;
+  const trades = [];
+  const dailyPnl = [];
+  const dayMap = params.dayMap;
+  const exitMin = parseTime(params.exitTime);
+
+  const dates = Object.keys(GROUPED).sort();
+  const fromD = (params.dateFrom || '').trim();
+  const toD   = (params.dateTo || '').trim();
+  for (const date of dates) {
+    if (fromD && date < fromD) continue;   // date-range filter
+    if (toD && date > toD) continue;
+    const dow = new Date(date).getDay();   // 0=Sun
+    const dayIdx = (dow + 6) % 7;          // 0=Mon
+    // Determine which instrument(s) to trade on this date
+    let instList;
+    if (params.tradeAll) {
+      // trade NIFTY + SENSEX (+ BankNifty) side by side — whichever have data that day
+      instList = ['NIFTY','SENSEX','NIFTYBANK'].filter(c => SPECS[c] && GROUPED[date][c]);
+    } else if (params.autoExpiry) {
+      let pick = pickByExpiry(date, params.candidateInsts);
+      if (!pick && (dayIdx in dayMap)) pick = dayMap[dayIdx];   // fallback (e.g. live days w/o expiry)
+      instList = pick ? [pick] : [];
+    } else {
+      instList = (dayIdx in dayMap) ? [dayMap[dayIdx]] : [];
+    }
+    for (const inst of instList) {
+    const spec = SPECS[inst];
+    if (!spec || !GROUPED[date][inst]) continue;
+
+    // Anchor ATM at refEnd (breakdown) or entryTime (time-based)
+    const anchorTime = (params.strategy === 'breakdown') ? params.refEnd : params.entryTime;
+    const strikes = Object.keys(GROUPED[date][inst]).map(Number).sort((a,b)=>a-b);
+    if (!strikes.length) continue;
+
+    // Find spot at anchor time across any strike
+    let anchorSpot = null;
+    for (const s of strikes) {
+      const row = GROUPED[date][inst][s].find(r => r.time === anchorTime);
+      if (row) { anchorSpot = row.spot; break; }
+    }
+    if (anchorSpot === null) continue;
+    const atm = Math.round(anchorSpot / spec.step) * spec.step;   // auto ATM
+    const ceStrike = atm + (params.ceOffset || 0) * spec.step;    // CE leg strike
+    const peStrike = atm + (params.peOffset || 0) * spec.step;    // PE leg strike (e.g. ATM-1)
+    if (!GROUPED[date][inst][ceStrike] || !GROUPED[date][inst][peStrike]) continue;
+    // chosen expiry (from the CE leg's data; both legs use the same expiry)
+    const exps = [...new Set(GROUPED[date][inst][ceStrike].map(r => r.exp).filter(Boolean))].sort();
+    let tgt = exps.length ? pickExpiry(exps, date, params.expiryType || 'nearest') : null;
+    // Build a merged series: CE premium from ceStrike, PE premium from peStrike, matched by time.
+    const mseries = (dt) => {
+      const ce = GROUPED[dt] && GROUPED[dt][inst] && GROUPED[dt][inst][ceStrike];
+      const pe = GROUPED[dt] && GROUPED[dt][inst] && GROUPED[dt][inst][peStrike];
+      if (!ce || !pe) return [];
+      const okE = r => (!r.exp || !tgt || r.exp === tgt);
+      const peT = {}; for (const r of pe) if (okE(r)) peT[r.time] = r;
+      return ce.filter(okE).map(r => ({ time: r.time, ce: r.ce, pe: (peT[r.time] ? peT[r.time].pe : 0), ce_h: r.ce_h, ce_l: r.ce_l, pe_h: (peT[r.time] ? peT[r.time].pe_h : undefined), pe_l: (peT[r.time] ? peT[r.time].pe_l : undefined), spot: r.spot, exp: r.exp }));
+    };
+    let series = mseries(date);
+    if (!series.length) continue;
+
+    const lotSize = lotFor(inst, date) * params.lots;
+    const dayTrades = [];
+    const reOpts = { reentryMode: params.reentryMode, reentrySL: params.reentrySL, maxReentries: params.maxReentries };
+
+    if (params.strategy === 'breakdown') {
+      // Ref window
+      const refStartMin = parseTime(params.refStart);
+      const refEndMin   = parseTime(params.refEnd);
+      const refRows = series.filter(r => {
+        const tm = parseTime(r.time);
+        return tm >= refStartMin && tm <= refEndMin;
+      });
+      if (!refRows.length) continue;
+      const ceLow  = Math.min(...refRows.map(r=>r.ce));
+      const ceHigh = Math.max(...refRows.map(r=>r.ce));
+      const peLow  = Math.min(...refRows.map(r=>r.pe));
+      const peHigh = Math.max(...refRows.map(r=>r.pe));
+
+      // Trade window — honors Next-Day carry (hold the breakout position overnight,
+      // exit at the carry time on the next trading day; SL = ref High checked across both)
+      const byTimeB = (a, b) => parseTime(a.time) - parseTime(b.time);
+      let tradeWin;
+      if (params.carry === 'nextday') {
+        const carryExitMin = parseTime(params.carryExitTime || params.exitTime);
+        const day1 = series.filter(r => { const tm = parseTime(r.time); return tm > refEndMin && tm <= parseTime('15:30'); }).slice().sort(byTimeB);
+        let day2 = [];
+        const di = dates.indexOf(date);
+        for (let j = di + 1; j < dates.length && j <= di + 6; j++) {
+          const nd = dates[j];
+          const same = mseries(nd).filter(r => parseTime(r.time) <= carryExitMin).slice().sort(byTimeB);
+          if (same.length) { day2 = same; break; }
+        }
+        if (!day2.length) { carrySkips++; continue; }   // no next-day data -> skip, do NOT fake a same-day exit
+        tradeWin = day1.concat(day2);
+      } else {
+        tradeWin = series.filter(r => {
+          const tm = parseTime(r.time);
+          return tm > refEndMin && tm <= exitMin;
+        });
+      }
+      if (tradeWin.length < 2) continue;
+
+      const ceTrades = runLegBreakdown(tradeWin, ceLow, ceHigh, 'ce', lotSize, reOpts);
+      const peTrades = runLegBreakdown(tradeWin, peLow, peHigh, 'pe', lotSize, reOpts);
+      ceTrades.forEach(t => dayTrades.push({...t, date, instrument:inst, leg:'CE', strike:atm}));
+      peTrades.forEach(t => dayTrades.push({...t, date, instrument:inst, leg:'PE', strike:atm}));
+    } else {
+      // time-based
+      const entryMin = parseTime(params.entryTime);
+      const byTime = (a, b) => parseTime(a.time) - parseTime(b.time);
+      let tradeWin, exitDate = date;
+      if (params.carry === 'nextday') {
+        // Hold overnight: day1 from entry to close, then the NEXT trading day
+        // (same strike + expiry) up to the exit time. SL is checked across both.
+        const carryExitMin = parseTime(params.carryExitTime || params.exitTime);
+        const day1 = series.filter(r => { const tm = parseTime(r.time); return tm >= entryMin && tm <= parseTime('15:30'); }).slice().sort(byTime);
+        let day2 = [];
+        const di = dates.indexOf(date);
+        for (let j = di + 1; j < dates.length && j <= di + 6; j++) {
+          const nd = dates[j];
+          const same = mseries(nd).filter(r => parseTime(r.time) <= carryExitMin).slice().sort(byTime);
+          if (same.length) { day2 = same; exitDate = nd; break; }
+        }
+        if (!day2.length) { carrySkips++; continue; }   // no next-day data -> skip, do NOT fake a same-day exit
+        tradeWin = day1.concat(day2);
+      } else {
+        tradeWin = series.filter(r => {
+          const tm = parseTime(r.time);
+          return tm >= entryMin && tm <= exitMin;
+        });
+      }
+      if (tradeWin.length < 2) continue;
+      const ceTrades = runLegPctSL(tradeWin, 'ce', params.slPct, lotSize, reOpts);
+      const peTrades = runLegPctSL(tradeWin, 'pe', params.slPct, lotSize, reOpts);
+      ceTrades.forEach(t => dayTrades.push({...t, date, instrument:inst, leg:'CE', strike:atm, exitDate}));
+      peTrades.forEach(t => dayTrades.push({...t, date, instrument:inst, leg:'PE', strike:atm, exitDate}));
+    }
+
+    trades.push(...dayTrades);
+    dailyPnl.push({
+      date, dow:['Mon','Tue','Wed','Thu','Fri'][dayIdx], instrument:inst,
+      atm, pnl: dayTrades.reduce((s,t)=>s+t.pnl,0),
+      nTrades: dayTrades.length,
+      slHits: dayTrades.filter(t=>t.reason==='SL').length
+    });
+    }  // end instrument loop
+  }
+
+  // Apply costs
+  // Costs computed generically per instrument (works for NIFTY, SENSEX, BANKNIFTY)
+  const totalLotSize = params.lots;
+  const tradesByInst = {};
+  trades.forEach(t => { tradesByInst[t.instrument] = (tradesByInst[t.instrument]||0) + 1; });
+  let costs = 0;
+  for (const inst in tradesByInst) {
+    const n = tradesByInst[inst];
+    const lotQty = SPECS[inst] ? SPECS[inst].lot : 0;
+    costs += n * params.brokerage * totalLotSize;          // brokerage per leg-trade
+    costs += n * params.slippage * lotQty * totalLotSize;  // slippage × lot size
+  }
+
+  if (carrySkips) { const m = 'Note: ' + carrySkips + ' day(s) skipped - Next-Day carry had no next-day data loaded.'; console.warn(m); setTimeout(function(){ var e = document.getElementById('status'); if (e) e.textContent = m; }, 80); }
+  return {trades, dailyPnl, costs, carrySkips};
+}
+
+// =============== RENDER ===============
+let pnlChart = null, dailyChart = null;
+
+function render(result, params) {
+  window._lastResult = result; window._lastParams = params;   // for Excel/CSV download
+  const main = $('main');
+  if (!result.dailyPnl.length) {
+    main.innerHTML = '<div class="empty"><h2>No trades generated</h2><p>Check times match your data and trading days have data.</p></div>';
+    return;
+  }
+
+  const gross = result.dailyPnl.reduce((s,d)=>s+d.pnl,0);
+  const net   = gross - result.costs;
+  const days  = result.dailyPnl.length;
+  const wins  = result.dailyPnl.filter(d=>d.pnl>0).length;
+  const losses = days - wins;
+  const winPct = (wins/days*100).toFixed(1);
+
+  // cum + DD
+  let cum = 0, peak = 0, maxDD = 0;
+  const cumArr = [];
+  const ddArr  = [];
+  for (const d of result.dailyPnl) {
+    cum += d.pnl;
+    if (cum > peak) peak = cum;
+    const dd = cum - peak;
+    if (dd < maxDD) maxDD = dd;
+    cumArr.push(cum); ddArr.push(dd);
+  }
+  const slHits = result.trades.filter(t=>t.reason==='SL').length;
+
+  // ===== StockMock-style metrics =====
+  const capital = (params.capital && params.capital > 0) ? params.capital : 200000;
+  const pctOf = v => (v / capital * 100);
+  const pctSpan = v => `<span style="font-size:11px;opacity:.65;font-weight:600">(${pctOf(v).toFixed(2)}%)</span>`;
+  const pf = v => `${fmt(v)} ${pctSpan(v)}`;
+  const dArr = result.dailyPnl.map(d => d.pnl);
+  const maxProfit = dArr.length ? Math.max(...dArr) : 0;
+  const maxLoss   = dArr.length ? Math.min(...dArr) : 0;
+  const winVals  = dArr.filter(v => v > 0);
+  const lossVals = dArr.filter(v => v < 0);
+  const avgWin  = winVals.length  ? winVals.reduce((a,b)=>a+b,0)/winVals.length  : 0;
+  const avgLoss = lossVals.length ? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : 0;
+  const nMonths = new Set(result.dailyPnl.map(d=>d.date.slice(0,7))).size || 1;
+  const avgMonthly = net / nMonths;
+  const lossPct = days ? (losses/days*100) : 0;
+  // win/loss streaks
+  let cW=0,cL=0,maxW=0,maxL=0;
+  for (const v of dArr){ if(v>0){cW++;cL=0;if(cW>maxW)maxW=cW;} else if(v<0){cL++;cW=0;if(cL>maxL)maxL=cL;} else {cW=0;cL=0;} }
+  // max drawdown peak -> trough -> recovery
+  let pk=-Infinity, pkIdx=-1, troughIdx=-1, mddVal=0, mddPeakIdx=-1;
+  for (let i=0;i<cumArr.length;i++){
+    if(cumArr[i]>pk){ pk=cumArr[i]; pkIdx=i; }
+    const dd = cumArr[i]-pk;
+    if(dd<mddVal){ mddVal=dd; troughIdx=i; mddPeakIdx=pkIdx; }
+  }
+  let recIdx=-1; const peakVal = (mddPeakIdx>=0)?cumArr[mddPeakIdx]:0;
+  for (let i=troughIdx; i>=0 && i<cumArr.length; i++){ if(cumArr[i]>=peakVal){ recIdx=i; break; } }
+  const dateAt = i => (i>=0 && result.dailyPnl[i]) ? fmtD(result.dailyPnl[i].date) : '—';
+  const daysBetween = (a,b) => (a<0||b<0)?0:Math.round((new Date(result.dailyPnl[b].date)-new Date(result.dailyPnl[a].date))/86400000);
+  const mddDur = daysBetween(mddPeakIdx, troughIdx);
+  const recDays = (recIdx>=0) ? daysBetween(troughIdx, recIdx) : null;
+  const ret2mdd = (maxDD!==0) ? (net/Math.abs(maxDD)) : 0;
+  const expectancy = (avgLoss!==0) ? ((net/days)/Math.abs(avgLoss)) : 0;
+
+  main.innerHTML = `
+    <div class="dash-grid">
+      <div class="card est"><div class="t">Estimated Capital/Margin</div><div class="v">${fmt(capital)}</div></div>
+      <div class="card ${net>=0?'pos':'neg'}"><div class="t">Overall Profit</div><div class="v">${pf(net)}</div></div>
+      <div class="card amber"><div class="t">Avg Day Profit</div><div class="v">${pf(net/days)}</div></div>
+      <div class="card pos"><div class="t">Max Profit (day)</div><div class="v">${pf(maxProfit)}</div></div>
+      <div class="card neg"><div class="t">Max Loss (day)</div><div class="v">${pf(maxLoss)}</div></div>
+      <div class="card pos"><div class="t">Win% (Days)</div><div class="v">${winPct}% <span style="font-size:11px;opacity:.65">(${wins})</span></div></div>
+      <div class="card neg"><div class="t">Loss% (Days)</div><div class="v">${lossPct.toFixed(0)}% <span style="font-size:11px;opacity:.65">(${losses})</span></div></div>
+      <div class="card amber"><div class="t">Avg Monthly Profit</div><div class="v">${pf(avgMonthly)}</div></div>
+      <div class="card pos"><div class="t">Avg Profit On Win Days</div><div class="v">${pf(avgWin)}</div></div>
+      <div class="card neg"><div class="t">Avg Loss On Loss Days</div><div class="v">${pf(avgLoss)}</div></div>
+      <div class="card neg"><div class="t">Max Drawdown (MDD)</div><div class="v">${pf(maxDD)}</div></div>
+      <div class="card"><div class="t">MDD Days (Recovery)</div><div class="v">${mddDur} ${recDays!=null?`(${recDays} Days)`:'(not yet)'}</div><div class="sub2">${dateAt(mddPeakIdx)} → ${dateAt(troughIdx)}</div></div>
+      <div class="card ${ret2mdd>=0?'pos':'neg'}"><div class="t">Return to MDD Ratio</div><div class="v">${ret2mdd.toFixed(2)}</div></div>
+      <div class="card pos"><div class="t">Max Winning Streak</div><div class="v">${maxW} Days</div></div>
+      <div class="card neg"><div class="t">Max Losing Streak</div><div class="v">${maxL} Days</div></div>
+      <div class="card"><div class="t">Expectancy</div><div class="v">${expectancy.toFixed(2)}</div></div>
+      <div class="card"><div class="t">Trading Days</div><div class="v">${days}</div></div>
+      <div class="card"><div class="t">Total Trades / SL Hits</div><div class="v">${result.trades.length} / ${slHits}</div></div>
+      <div class="card neg"><div class="t">Total Costs</div><div class="v">${fmt(result.costs)}</div></div>
+    </div>
+
+    <div class="chart-wrap"><canvas id="pnlChart" height="100"></canvas></div>
+    <div class="chart-wrap"><canvas id="dailyChart" height="80"></canvas></div>
+
+    <div style="margin:8px 0;text-align:right">
+      <button onclick="downloadResults()" style="background:#1e7e34;width:auto;padding:8px 16px">📥 Download Excel (CSV)</button>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="daily">📋 Daily P&L</button>
+      <button class="tab-btn" data-tab="trades">📑 Trade Log</button>
+      <button class="tab-btn" data-tab="byinst">📊 By Instrument</button>
+    </div>
+    <div id="tab-daily" class="tab-content active"></div>
+    <div id="tab-trades" class="tab-content"></div>
+    <div id="tab-byinst" class="tab-content"></div>
+  `;
+
+  // Charts
+  const labels = result.dailyPnl.map(d=>fmtD(d.date));
+  if (pnlChart) pnlChart.destroy();
+  pnlChart = new Chart($('pnlChart').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {label:'Cumulative P&L', data:cumArr, borderColor:'#1F3864', backgroundColor:'rgba(31,56,100,0.1)', fill:true, tension:0.1, pointRadius:2},
+        {label:'Drawdown', data:ddArr, borderColor:'#D62728', backgroundColor:'rgba(214,39,40,0.2)', fill:true, tension:0.1, pointRadius:0},
+      ]
+    },
+    options: {responsive:true, maintainAspectRatio:false, animation:false, plugins:{title:{display:true, text:'Equity Curve & Drawdown'}}, scales:{y:{beginAtZero:true}}}
+  });
+  if (dailyChart) dailyChart.destroy();
+  dailyChart = new Chart($('dailyChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label:'Daily P&L',
+        data:result.dailyPnl.map(d=>d.pnl),
+        backgroundColor: result.dailyPnl.map(d=>d.pnl>0?'#2CA02C':'#D62728')
+      }]
+    },
+    options: {responsive:true, maintainAspectRatio:false, animation:false, plugins:{title:{display:true, text:'Daily P&L'}, legend:{display:false}}}
+  });
+
+  // Daily tab
+  $('tab-daily').innerHTML = `
+    <table><thead><tr>
+      <th>Date</th><th>Day</th><th>Instrument</th><th>ATM</th>
+      <th class="right">P&L</th><th class="center">Trades</th><th class="center">SL Hits</th>
+    </tr></thead><tbody>
+      ${result.dailyPnl.map(d=>`<tr>
+        <td>${fmtD(d.date)}</td><td>${d.dow}</td><td>${d.instrument}</td>
+        <td class="right">${d.atm}</td>
+        <td class="right ${d.pnl>0?'green':d.pnl<0?'red':''}">${fmt(d.pnl)}</td>
+        <td class="center">${d.nTrades}</td><td class="center">${d.slHits}</td>
+      </tr>`).join('')}
+    </tbody></table>
+  `;
+
+  // Trades tab
+  $('tab-trades').innerHTML = `
+    <table><thead><tr>
+      <th>Date</th><th>Inst</th><th>Leg</th><th>Strike</th>
+      <th>Entry</th><th class="right">EP</th>
+      <th>Exit</th><th class="right">XP</th>
+      <th>Reason</th><th class="right">P&L</th>
+    </tr></thead><tbody>
+      ${result.trades.map(t=>`<tr>
+        <td>${fmtD(t.date)}</td><td>${t.instrument}</td><td>${t.leg}</td><td>${t.strike}</td>
+        <td>${t.et}</td><td class="right">${fmt2(t.ep)}</td>
+        <td>${t.xt}</td><td class="right">${fmt2(t.xp)}</td>
+        <td>${t.reason}</td>
+        <td class="right ${t.pnl>0?'green':t.pnl<0?'red':''}">${fmt(t.pnl)}</td>
+      </tr>`).join('')}
+    </tbody></table>
+  `;
+
+  // By instrument tab
+  const byInst = {};
+  for (const d of result.dailyPnl) {
+    if (!byInst[d.instrument]) byInst[d.instrument] = {days:0, gross:0, best:-Infinity, worst:Infinity};
+    byInst[d.instrument].days++;
+    byInst[d.instrument].gross += d.pnl;
+    if (d.pnl > byInst[d.instrument].best) byInst[d.instrument].best = d.pnl;
+    if (d.pnl < byInst[d.instrument].worst) byInst[d.instrument].worst = d.pnl;
+  }
+  $('tab-byinst').innerHTML = `
+    <table><thead><tr>
+      <th>Instrument</th><th class="center">Days</th><th class="right">Gross P&L</th>
+      <th class="right">Avg Daily</th><th class="right">Best Day</th><th class="right">Worst Day</th>
+    </tr></thead><tbody>
+      ${Object.entries(byInst).map(([k,v])=>`<tr>
+        <td><strong>${k}</strong></td>
+        <td class="center">${v.days}</td>
+        <td class="right ${v.gross>0?'green':'red'}">${fmt(v.gross)}</td>
+        <td class="right">${fmt(v.gross/v.days)}</td>
+        <td class="right green">${fmt(v.best)}</td>
+        <td class="right red">${fmt(v.worst)}</td>
+      </tr>`).join('')}
+    </tbody></table>
+  `;
+
+  // Tab switching
+  document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    $('tab-'+b.dataset.tab).classList.add('active');
+  }));
+}
+
+// =============== RUN ===============
+// On-demand range loader: pull just the selected dates from the local data server's
+// /slice endpoint (full 2015->today), plus the cloud live days. Falls back silently
+// to whatever is already loaded if the data server isn't running.
+let loadedRangeFrom = null, loadedRangeTo = null;
+async function ensureRangeLoaded(from, to) {
+  if (!from || !to) return;
+  if (loadedRangeFrom && from >= loadedRangeFrom && to <= loadedRangeTo) return;  // already covered
+  let sliceOk = false;
+  try { sliceOk = (await fetch(`/slice?from=${from}&to=${to}`, { method: 'HEAD' })).ok; } catch (e) {}
+  if (!sliceOk) return;   // data server not running -> keep existing auto-loaded data
+  resetData();
+  $('status').textContent = `Loading data ${from} → ${to}…`;
+  setBar(5);
+  await streamCsv(`/slice?from=${from}&to=${to}`, 'range');
+  setBar(60);
+  let live = await streamCsv(CLOUD_DATA_URL, 'live (cloud)');
+  if (!live) await streamCsv('kite_live_data.csv', 'live (local)');
+  setBar(null);
+  loadedRangeFrom = from; loadedRangeTo = to;
+  finishLoad(`range ${from} → ${to}`);
+}
+
+$('runBtn').addEventListener('click', async () => {
+  $('status').textContent = 'Running on cloud…';
+  const params = {
+    strategy: $('strategy').value,
+    refStart: $('refStart').value,
+    refEnd:   $('refEnd').value,
+    entryTime: $('entryHour').value + ':' + $('entryMin').value,
+    exitTime:  $('exitHour').value + ':' + $('exitMin').value,
+    slPct:    parseInt($('slPct').value) / 100,
+    brokerage:parseInt($('brokerage').value),
+    slippage: parseFloat($('slippage').value),
+    lots:     parseInt($('lots').value),
+    dayMap:   getDayMap(),
+    autoExpiry: $('autoExpiry').checked,
+    tradeAll: $('tradeAll').checked,
+    candidateInsts: getCandidateInsts(),
+    dateFrom: $('dateFrom').value,
+    dateTo:   $('dateTo').value,
+    expiryType: $('expiryType').value,
+    ceOffset: parseInt($('ceOffset').value) || 0,
+    peOffset: parseInt($('peOffset').value) || 0,
+    capital: parseFloat($('capital').value) || 200000,
+    carry: (document.querySelector('input[name=carry]:checked') || {}).value || 'same',
+    carryExitTime: ($('carryExitHour') ? $('carryExitHour').value + ':' + $('carryExitMin').value : '15:25'),
+    reentryMode: $('reentryMode').value,
+    reentrySL:   $('reentrySL').value,
+    maxReentries: parseInt($('maxReentries').value) || 0,
+  };
+  // 1) Try the CLOUD engine first — runs server-side, no browser memory limit, any range.
+  try {
+    const res = await fetch('/backtest', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(params) });
+    if (res.ok) {
+      const result = await res.json();
+      if (result && !result.error && result.dailyPnl) {
+        render(result, params);
+        $('status').textContent = `Done · ${result.dailyPnl.length} days · ${result.trades.length} trades (cloud)`;
+        return;
+      }
+      if (result && result.error) { $('status').textContent = 'Cloud error: ' + result.error; }
+    }
+  } catch (e) { /* cloud not available -> fall back to local */ }
+  // 2) Fallback: local browser backtest (loads the slice into the page).
+  $('status').textContent = 'Loading…';
+  await ensureRangeLoaded($('dateFrom').value, $('dateTo').value);
+  if (!GROUPED) { $('status').textContent = 'No data loaded.'; return; }
+  setTimeout(() => {
+    try {
+      const result = runBacktest(params);
+      render(result, params);
+      $('status').textContent = `Done · ${result.dailyPnl.length} days · ${result.trades.length} trades`;
+    } catch (e) {
+      console.error(e);
+      $('status').textContent = 'Error: ' + e.message;
+    }
+  }, 50);
+});
+
+// =============== EXCEL / CSV DOWNLOAD ===============
+function csvCell(v){ const s = (v==null?'':String(v)); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; }
+function downloadResults(){
+  const r = window._lastResult, p = window._lastParams;
+  if (!r || !r.dailyPnl) { alert('Run a backtest first.'); return; }
+  const lines = [];
+  // summary
+  const gross = r.dailyPnl.reduce((s,d)=>s+d.pnl,0), net = gross - r.costs, days = r.dailyPnl.length;
+  const wins = r.dailyPnl.filter(d=>d.pnl>0).length;
+  lines.push('F&O Backtest Results');
+  lines.push(['Strategy',p.strategy,'From',fmtD(p.dateFrom),'To',fmtD(p.dateTo),'Expiry',p.expiryType].map(csvCell).join(','));
+  lines.push(['Net P&L',Math.round(net),'Gross',Math.round(gross),'Costs',Math.round(r.costs),'Days',days,'Win%',(days?(wins/days*100).toFixed(1):0)].map(csvCell).join(','));
+  lines.push('');
+  // daily
+  lines.push('DAILY P&L');
+  lines.push('Date,Day,Instrument,ATM,P&L,Trades,SL Hits');
+  for (const d of r.dailyPnl)
+    lines.push([fmtD(d.date),d.dow,d.instrument,d.atm,Math.round(d.pnl),d.nTrades,d.slHits].map(csvCell).join(','));
+  lines.push('');
+  // trades
+  lines.push('TRADE LOG');
+  lines.push('Date,Instrument,Leg,Strike,Entry Time,Entry Price,Exit Time,Exit Price,Reason,P&L');
+  for (const t of r.trades)
+    lines.push([fmtD(t.date),t.instrument,t.leg,t.strike,t.et,t.ep,t.xt,t.xp,t.reason,Math.round(t.pnl)].map(csvCell).join(','));
+  const csv = '\ufeff' + lines.join('\r\n');   // BOM so Excel opens UTF-8 cleanly
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `backtest_${p.dateFrom}_to_${p.dateTo}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
+
+// =============== REFERENCE-WINDOW SWEEP ===============
+function minToHHMM(m){ return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); }
+
+function buildParams(){
+  return {
+    strategy: $('strategy').value, refStart: $('refStart').value, refEnd: $('refEnd').value,
+    entryTime: $('entryHour').value+':'+$('entryMin').value,
+    exitTime:  $('exitHour').value+':'+$('exitMin').value,
+    slPct: parseInt($('slPct').value)/100, brokerage: parseInt($('brokerage').value),
+    slippage: parseFloat($('slippage').value), lots: parseInt($('lots').value),
+    dayMap: getDayMap(), autoExpiry: $('autoExpiry').checked, tradeAll: $('tradeAll').checked,
+    candidateInsts: getCandidateInsts(), dateFrom: $('dateFrom').value, dateTo: $('dateTo').value,
+    expiryType: $('expiryType').value, ceOffset: parseInt($('ceOffset').value)||0, peOffset: parseInt($('peOffset').value)||0,
+    capital: parseFloat($('capital').value)||200000,
+    carry: (document.querySelector('input[name=carry]:checked')||{}).value||'same',
+    carryExitTime: ($('carryExitHour')?$('carryExitHour').value+':'+$('carryExitMin').value:'15:25'),
+    reentryMode: $('reentryMode').value, reentrySL: $('reentrySL').value,
+    maxReentries: parseInt($('maxReentries').value)||0,
+  };
+}
+
+async function sweepRefWindow(){
+  const base = buildParams();
+  $('status').textContent = 'Loading…';
+  await ensureRangeLoaded(base.dateFrom, base.dateTo);
+  if (!GROUPED) { $('status').textContent='No data loaded.'; return; }
+  base.strategy = 'breakdown';   // sweep is for Range Breakout
+  const startMin = parseTime(base.refStart);
+  const untilMin = parseTime($('sweepUntil').value||'11:45');
+  const step = Math.max(1, parseInt($('sweepStep').value)||5);
+  $('status').textContent = 'Running sweep…';
+  const results = [];
+  for (let m = startMin+5; m <= untilMin; m += step){   // earliest window = START + 5 min
+    const refEnd = minToHHMM(m);
+    let r; try { r = runBacktest({...base, refEnd}); } catch(e){ continue; }
+    const net = r.dailyPnl.reduce((s,d)=>s+d.pnl,0) - r.costs;
+    const days = r.dailyPnl.length, wins = r.dailyPnl.filter(d=>d.pnl>0).length;
+    results.push({refEnd, net, days, winPct: days?(wins/days*100):0, trades:r.trades.length});
+  }
+  results.sort((a,b)=>b.net-a.net);
+  renderSweep(results, base);
+  $('status').textContent = `Sweep done · ${results.length} windows tested`;
+}
+
+function renderSweep(results, base){
+  const main = $('main');
+  if (!results.length){ main.innerHTML='<div class="empty"><h2>No sweep results</h2><p>Check the date range has Range-Breakout data.</p></div>'; return; }
+  const best = results[0], worst = results[results.length-1];
+  const rows = results.map((r,i)=>`<tr${i===0?' style="background:#eaf8ee;font-weight:600"':''}>
+    <td>${base.refStart} – ${r.refEnd}</td>
+    <td class="right ${r.net>0?'green':'red'}">${fmt(r.net)}</td>
+    <td class="center">${r.winPct.toFixed(0)}%</td>
+    <td class="center">${r.days}</td><td class="center">${r.trades}</td></tr>`).join('');
+  main.innerHTML = `
+    <div class="dash-grid">
+      <div class="card pos"><div class="t">Best window</div><div class="v">${base.refStart}–${best.refEnd}</div><div class="sub2">${fmt(best.net)}</div></div>
+      <div class="card neg"><div class="t">Worst window</div><div class="v">${base.refStart}–${worst.refEnd}</div><div class="sub2">${fmt(worst.net)}</div></div>
+      <div class="card"><div class="t">Windows tested</div><div class="v">${results.length}</div></div>
+    </div>
+    <div class="chart-wrap"><canvas id="sweepChart" height="90"></canvas></div>
+    <table><thead><tr><th>Reference window</th><th class="right">Net P&L</th><th class="center">Win%</th><th class="center">Days</th><th class="center">Trades</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  const chrono = [...results].sort((a,b)=>parseTime(a.refEnd)-parseTime(b.refEnd));
+  if (window._sweepChart) window._sweepChart.destroy();
+  window._sweepChart = new Chart($('sweepChart').getContext('2d'), {
+    type:'bar',
+    data:{ labels: chrono.map(r=>r.refEnd), datasets:[{label:'Net P&L', data: chrono.map(r=>r.net), backgroundColor: chrono.map(r=>r.net>0?'#2CA02C':'#D62728')}]},
+    options:{responsive:true, maintainAspectRatio:false, animation:false, plugins:{title:{display:true,text:`Net P&L by reference-window END (start ${base.refStart})`}, legend:{display:false}}}
+  });
+}
+
+$('sweepBtn').addEventListener('click', sweepRefWindow);
+
+
+/* --- per-instrument P&L strip at top of dashboard (added) --- */
+(function(){
+  if (typeof render !== 'function' || window.__instSummaryWrapped) return;
+  window.__instSummaryWrapped = true;
+  const _origRender = render;
+  render = function(result, params){
+    _origRender(result, params);
+    try { __addInstrumentSummary(result); } catch(e){ console.error('inst summary', e); }
+  };
+  window.__addInstrumentSummary = function(result){
+    if (!result || !result.dailyPnl) return;
+    const by = {};
+    for (const d of result.dailyPnl){
+      const k = d.instrument || '—';
+      if (!by[k]) by[k] = { pnl:0, days:0, tr:0 };
+      by[k].pnl += (d.pnl||0); by[k].days += 1; by[k].tr += (d.nTrades||0);
+    }
+    const insts = Object.keys(by);
+    if (insts.length <= 1) return;
+    const nice = n => '₹' + Math.round(n).toLocaleString('en-IN');
+    const cards = insts.map(k=>{
+      const v = by[k]; const col = v.pnl >= 0 ? '#1a9850' : '#d62728';
+      return '<div style="flex:1;min-width:150px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px">'
+        + '<div style="font-size:12px;color:#6c7a89">'+k+'</div>'
+        + '<div style="font-size:20px;font-weight:700;color:'+col+'">'+nice(v.pnl)+'</div>'
+        + '<div style="font-size:11px;color:#6c7a89">'+v.days+' days · '+v.tr+' trades</div></div>';
+    }).join('');
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px 0';
+    bar.innerHTML = '<div style="flex-basis:100%;font-weight:700;color:#2c3e50;margin-bottom:2px">Per-instrument P&L (compare)</div>' + cards;
+    const main = document.getElementById('main');
+    if (main && main.firstChild) main.insertBefore(bar, main.firstChild);
+  };
+})();
+
+/* --- Range Breakout defaults to Next-Day carry (added) --- */
+(function(){
+  const sel = document.getElementById('strategy');
+  if (!sel || sel.__carryHook) return;
+  sel.__carryHook = true;
+  sel.addEventListener('change', function(){
+    if (sel.value === 'breakdown'){
+      const nd = document.querySelector('input[name=carry][value=nextday]');
+      if (nd) nd.checked = true;
+    }
+  });
+})();
+
+/*INSTCMP2*/
+(function(){
+  window.__addInstrumentSummary = function(result){
+    if (!result || !result.dailyPnl) return;
+    const capEl = document.getElementById('capital');
+    const capital = capEl ? (parseFloat(capEl.value)||200000) : 200000;
+    const by = {}; const dates = []; const seen = {};
+    for (const d of result.dailyPnl){
+      const k = d.instrument || '-';
+      if (!by[k]) by[k] = { pnl:0, days:0, tr:0, byDate:{} };
+      by[k].pnl += (d.pnl||0); by[k].days += 1; by[k].tr += (d.nTrades||0);
+      by[k].byDate[d.date] = (by[k].byDate[d.date]||0) + (d.pnl||0);
+      if (!seen[d.date]){ seen[d.date]=1; dates.push(d.date); }
+    }
+    const order = ['NIFTY','NIFTYBANK','SENSEX'].filter(k=>by[k]).concat(Object.keys(by).filter(k=>['NIFTY','NIFTYBANK','SENSEX'].indexOf(k)<0));
+    if (order.length <= 1) return;
+    dates.sort();
+    const nice = n => '₹' + Math.round(n).toLocaleString('en-IN');
+    const pct = n => (n/capital*100).toFixed(1) + '%';
+    const cards = order.map(k=>{
+      const v = by[k]; const col = v.pnl>=0 ? '#1a9850' : '#d62728';
+      return '<div style="flex:1;min-width:160px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px">'
+        + '<div style="font-size:12px;color:#6c7a89">'+k+'</div>'
+        + '<div style="font-size:20px;font-weight:700;color:'+col+'">'+nice(v.pnl)+' <span style="font-size:13px">('+pct(v.pnl)+')</span></div>'
+        + '<div style="font-size:11px;color:#6c7a89">'+v.days+' days &middot; '+v.tr+' trades</div></div>';
+    }).join('');
+    const cell = v => { if (v==null) return '<td style="text-align:right;color:#c8c8c8;padding:2px 10px">&mdash;</td>';
+      const c = v>=0 ? '#1a9850' : '#d62728'; return '<td style="text-align:right;color:'+c+';padding:2px 10px">'+nice(v)+'</td>'; };
+    const head = '<tr style="background:#1f3a5f;color:#fff"><th style="text-align:left;padding:4px 8px">Date</th>'
+      + order.map(k=>'<th style="text-align:right;padding:4px 10px">'+k+'</th>').join('') + '</tr>';
+    const totalRow = '<tr style="font-weight:700;border-top:2px solid #ccc;background:#eef3f8"><td style="padding:3px 8px">Total</td>'
+      + order.map(k=>cell(by[k].pnl)).join('') + '</tr>';
+    const pctRow = '<tr style="font-weight:600;color:#555;background:#eef3f8"><td style="padding:3px 8px">Return %</td>'
+      + order.map(k=>'<td style="text-align:right;padding:2px 10px">'+pct(by[k].pnl)+'</td>').join('') + '</tr>';
+    let rows = '';
+    for (const dt of dates){ rows += '<tr><td style="white-space:nowrap;padding:2px 8px">'+dt+'</td>' + order.map(k=>cell(by[k].byDate[dt])).join('') + '</tr>'; }
+    const table = '<details open style="margin-top:10px"><summary style="cursor:pointer;font-weight:700;color:#2c3e50">Day-by-day comparison (NIFTY / Bank Nifty / SENSEX)</summary>'
+      + '<div style="max-height:380px;overflow:auto;margin-top:6px;border:1px solid #e5e7eb;border-radius:8px"><table style="border-collapse:collapse;width:100%;font-size:12.5px">'
+      + '<thead>'+head+'</thead><tbody>'+totalRow+pctRow+rows+'</tbody></table></div></details>';
+    const bar = document.createElement('div');
+    bar.style.cssText = 'margin:0 0 14px 0';
+    bar.innerHTML = '<div style="font-weight:700;color:#2c3e50;margin-bottom:6px">Per-instrument comparison</div>'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap">'+cards+'</div>' + table;
+    const main = document.getElementById('main');
+    if (main && main.firstChild) main.insertBefore(bar, main.firstChild);
+  };
+})();
+
+/*INSTCMP3*/
+(function(){
+  window.__addInstrumentSummary = function(result){
+    if (!result || !result.dailyPnl) return;
+    const capEl = document.getElementById('capital');
+    const capital = capEl ? (parseFloat(capEl.value)||200000) : 200000;
+    const by = {}; const dates = []; const seen = {};
+    for (const d of result.dailyPnl){
+      const k = d.instrument || '-';
+      if (!by[k]) by[k] = { pnl:0, days:0, tr:0, byDate:{} };
+      by[k].pnl += (d.pnl||0); by[k].days += 1; by[k].tr += (d.nTrades||0);
+      by[k].byDate[d.date] = (by[k].byDate[d.date]||0) + (d.pnl||0);
+      if (!seen[d.date]){ seen[d.date]=1; dates.push(d.date); }
+    }
+    const order = ['NIFTY','NIFTYBANK','SENSEX'].filter(k=>by[k]).concat(Object.keys(by).filter(k=>['NIFTY','NIFTYBANK','SENSEX'].indexOf(k)<0));
+    if (order.length <= 1) return;
+    dates.sort();
+    const nice = n => '₹' + Math.round(n).toLocaleString('en-IN');
+    const pct = n => (n/capital*100).toFixed(1) + '%';
+    const cards = order.map(k=>{
+      const v = by[k]; const col = v.pnl>=0 ? '#1a9850' : '#d62728';
+      return '<div style="flex:1;min-width:160px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px">'
+        + '<div style="font-size:12px;color:#6c7a89">'+k+'</div>'
+        + '<div style="font-size:20px;font-weight:700;color:'+col+'">'+nice(v.pnl)+' <span style="font-size:13px">('+pct(v.pnl)+')</span></div>'
+        + '<div style="font-size:11px;color:#6c7a89">'+v.days+' days &middot; '+v.tr+' trades</div></div>';
+    }).join('');
+    const cell = v => { if (v==null) return '<td style="text-align:right;color:#c8c8c8;padding:2px 10px">&mdash;</td>';
+      const c = v>=0 ? '#1a9850' : '#d62728'; return '<td style="text-align:right;color:'+c+';padding:2px 10px">'+nice(v)+'</td>'; };
+    const head = '<tr style="background:#1f3a5f;color:#fff"><th style="text-align:left;padding:4px 8px">Date</th>'
+      + order.map(k=>'<th style="text-align:right;padding:4px 10px">'+k+'</th>').join('') + '</tr>';
+    const totalRow = '<tr style="font-weight:700;border-top:2px solid #ccc;background:#eef3f8"><td style="padding:3px 8px">Total</td>'
+      + order.map(k=>cell(by[k].pnl)).join('') + '</tr>';
+    const pctRow = '<tr style="font-weight:600;color:#555;background:#eef3f8"><td style="padding:3px 8px">Return %</td>'
+      + order.map(k=>'<td style="text-align:right;padding:2px 10px">'+pct(by[k].pnl)+'</td>').join('') + '</tr>';
+    let rows = '';
+    for (const dt of dates){ rows += '<tr><td style="white-space:nowrap;padding:2px 8px">'+dt+'</td>' + order.map(k=>cell(by[k].byDate[dt])).join('') + '</tr>'; }
+    const table = '<div style="max-height:420px;overflow:auto;margin-top:6px;border:1px solid #e5e7eb;border-radius:8px"><table style="border-collapse:collapse;width:100%;font-size:12.5px">'
+      + '<thead>'+head+'</thead><tbody>'+totalRow+pctRow+rows+'</tbody></table></div>';
+    const old = document.getElementById('__instCmpBlock'); if (old) old.remove();
+    const bar = document.createElement('div');
+    bar.id = '__instCmpBlock';
+    bar.style.cssText = 'margin:22px 0 8px 0;border-top:2px dashed #cbd5e1;padding-top:16px';
+    bar.innerHTML = '<div style="font-weight:700;font-size:16px;color:#2c3e50;margin-bottom:8px">📊 Per-instrument comparison (NIFTY / Bank Nifty / SENSEX)</div>'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+cards+'</div>' + table;
+    const main = document.getElementById('main');
+    if (main) main.appendChild(bar);
+  };
+  const exp = document.getElementById('expiryType');
+  if (exp && !exp.__cmpHook){
+    exp.__cmpHook = true;
+    exp.addEventListener('change', function(){
+      if (exp.value === 'monthly'){ const ta = document.getElementById('tradeAll'); if (ta) ta.checked = true; }
+    });
+  }
+})();
+</script>
+</body>
+</html>
