@@ -173,6 +173,7 @@
     <select id="strategy">
       <option value="time_based" selected>Time-Based Short Straddle (sell at entry, exit at exit time)</option>
       <option value="breakdown">Range Breakout (Sell Below Low, SL = High)</option>
+      <option value="cross_expiry">Cross Expiry (2PM Tue/Thu roll — live side into next expiry, other index)</option>
     </select>
 
     <label>Expiry to trade</label>
@@ -718,10 +719,12 @@ window.addEventListener('DOMContentLoaded', () => {
 // =============== STRATEGY DISPATCH ===============
 $('strategy').addEventListener('change', e => {
   const v = e.target.value;
+  const noPct = (v === 'breakdown' || v === 'cross_expiry');   // both use a High-based SL, not the % slider
   $('rangeFields').style.display = (v === 'breakdown') ? 'block' : 'none';
+  // Cross Expiry entry is fixed at 14:00 internally, so the entry-time picker is hidden
   $('timeFields').style.display  = (v === 'time_based') ? 'block' : 'none';
-  // Range Breakout uses the ref-window High as the SL, so the % slider is hidden there
-  $('slField').style.display = (v === 'breakdown') ? 'none' : 'block';
+  // Range Breakout / Cross Expiry use a High as the SL, so the % slider is hidden there
+  $('slField').style.display = noPct ? 'none' : 'block';
   $('slNote').style.display  = (v === 'breakdown') ? 'block' : 'none';
   // Auto-set the re-entry to this strategy's defaults (re-sell at the Low, same High SL,
   // re-enter every time). Dropdowns stay editable for manual override.
@@ -1091,6 +1094,118 @@ function runBacktest(params) {
   return {trades, dailyPnl, costs, carrySkips};
 }
 
+// =============== CROSS-EXPIRY ROLL ENGINE (browser only) ===============
+// One short position rolled across weekly expiries, hopping indices. On the
+// CURRENT index's expiry day at 14:00: square the prior roll and open the SAME
+// side ATM in the NEXT expiry (the other index). Side mirrors that day's 10:03
+// live side on the expiring index (flips if its 10:03-candle-high SL was hit
+// before 14:00). Roll-leg SL = the 14:00 entry-bar high (2PM candle high),
+// checked across the whole hold. P&L in points x date-correct lot.
+// Pair is NIFTY <-> SENSEX. Nifty expiry-day 14:00 -> sell next Sensex expiry;
+// Sensex expiry-day 14:00 -> sell next Nifty expiry.
+function ceNearestExp(date, inst){
+  const g = GROUPED[date] && GROUPED[date][inst]; if(!g) return null;
+  let ne=null;
+  for(const s in g) for(const r of g[s]){ if(r.exp && r.exp>=date && (ne===null||r.exp<ne)) ne=r.exp; }
+  return ne;
+}
+function ceAtm(date, inst, time){
+  const g = GROUPED[date] && GROUPED[date][inst]; const spec=SPECS[inst];
+  if(!g||!spec) return null;
+  for(const s of Object.keys(g)){ const row=g[s].find(r=>r.time===time); if(row&&row.spot!=null) return Math.round(row.spot/spec.step)*spec.step; }
+  return null;
+}
+// single-leg series (chosen side) at a fixed strike+expiry for one date, time-sorted
+function ceLeg(date, inst, strike, exp, side){
+  const g = GROUPED[date] && GROUPED[date][inst] && GROUPED[date][inst][strike]; if(!g) return [];
+  const pk = (side==='CE')?'ce':'pe';
+  return g.filter(r=>!r.exp||r.exp===exp)
+          .map(r=>({time:r.time, p:r[pk], h:(r[pk+'_h']!=null?r[pk+'_h']:r[pk]), l:(r[pk+'_l']!=null?r[pk+'_l']:r[pk])}))
+          .filter(r=>r.p!=null)
+          .sort((a,b)=>parseTime(a.time)-parseTime(b.time));
+}
+// The 10:03 live side on the expiring index at `cutoff` (14:00). Fresh 10:03 read:
+// sell whichever leg first breaks below its 10:03-candle low; if that leg's
+// 10:03-candle high is hit, it's stopped and the other leg becomes eligible.
+// Returns 'CE' | 'PE' | null (null = nothing live at the cutoff -> no roll).
+function ceLiveSide(date, inst, cutoff){
+  const nexp = ceNearestExp(date, inst); if(!nexp) return null;
+  const atm  = ceAtm(date, inst, '10:03'); if(atm===null) return null;
+  const ce = ceLeg(date, inst, atm, nexp, 'CE');
+  const pe = ceLeg(date, inst, atm, nexp, 'PE');
+  const c0 = ce.find(r=>r.time==='10:03'), p0 = pe.find(r=>r.time==='10:03');
+  if(!c0||!p0) return null;
+  const ref = { CE:{lo:c0.l, hi:c0.h}, PE:{lo:p0.l, hi:p0.h} };
+  const cutM = parseTime(cutoff), t0 = parseTime('10:03');
+  const tmap = {};
+  for(const r of ce){ const m=parseTime(r.time); if(m>t0 && m<=cutM) (tmap[r.time]=tmap[r.time]||{}).CE=r; }
+  for(const r of pe){ const m=parseTime(r.time); if(m>t0 && m<=cutM) (tmap[r.time]=tmap[r.time]||{}).PE=r; }
+  const times = Object.keys(tmap).sort((a,b)=>parseTime(a)-parseTime(b));
+  let live=null; const stopped={CE:false, PE:false};
+  for(const t of times){
+    const row = tmap[t];
+    if(live){ const lr=row[live]; if(lr && lr.h>=ref[live].hi){ stopped[live]=true; live=null; } }
+    if(!live){ for(const sd of ['CE','PE']){ if(stopped[sd]) continue; const rr=row[sd]; if(rr && rr.l<=ref[sd].lo){ live=sd; break; } } }
+  }
+  return live;
+}
+function runBacktestCrossExpiry(params){
+  const ENTRY='14:00', E=parseTime('14:00'), CLOSE=parseTime('15:30');
+  const pair=['NIFTY','SENSEX'];
+  const dowArr=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const trades=[], dailyPnl=[]; let carrySkips=0;
+  const dates=Object.keys(GROUPED).sort();
+  const fromD=(params.dateFrom||'').trim(), toD=(params.dateTo||'').trim();
+  let pos=null;  // {inst, side, strike, exp, et, ep, sl, entryDate}
+  const closeOut=(exitDate,xt,xp,reason)=>{
+    const lot=lotFor(pos.inst,exitDate)*params.lots;
+    const pnl=(pos.ep-xp)*lot;
+    trades.push({date:pos.entryDate, exitDate, instrument:pos.inst, leg:pos.side, strike:pos.strike, et:pos.et, ep:pos.ep, xt, xp, reason, pnl});
+    dailyPnl.push({date:exitDate, dow:dowArr[(new Date(exitDate).getDay()+6)%7], instrument:pos.inst, atm:pos.strike, pnl, nTrades:1, slHits:(reason==='SL'?1:0)});
+    pos=null;
+  };
+  for(const date of dates){
+    if(fromD && date<fromD) continue;
+    if(toD && date>toD) continue;
+    const exp={}; for(const ix of pair) exp[ix]=ceNearestExp(date,ix);
+    const expiringToday=pair.filter(ix=>exp[ix]===date);
+    // A) manage an open roll across today: SL first (any bar), then square on its expiry day
+    if(pos){
+      const isSquareDay=(exp[pos.inst]===date);
+      const endM=isSquareDay?E:CLOSE;
+      const startM=(date===pos.entryDate)?E:0;
+      const ser=ceLeg(date,pos.inst,pos.strike,pos.exp,pos.side);
+      let done=false;
+      for(const r of ser){ const m=parseTime(r.time); if(m<startM||m>endM) continue;
+        if(r.h>=pos.sl){ closeOut(date, r.time, pos.sl, 'SL'); done=true; break; } }
+      if(!done && isSquareDay){
+        const cand=ser.filter(r=>parseTime(r.time)<=E);
+        const bar=cand.length?cand[cand.length-1]:null;
+        if(bar) closeOut(date, bar.time, bar.p, 'ROLL'); else { carrySkips++; pos=null; }
+      }
+    }
+    // B) open a fresh roll on the current index's expiry day, into the OTHER index's next expiry
+    if(!pos && expiringToday.length===1){
+      const cur=expiringToday[0], nxt=pair.find(ix=>ix!==cur);
+      const side=ceLiveSide(date, cur, ENTRY);
+      if(side){
+        const nexp=ceNearestExp(date, nxt), strike=ceAtm(date, nxt, ENTRY);
+        if(nexp && nexp>date && strike!==null){
+          const eb=ceLeg(date, nxt, strike, nexp, side).find(r=>parseTime(r.time)>=E);
+          if(eb) pos={inst:nxt, side, strike, exp:nexp, et:eb.time, ep:eb.p, sl:eb.h, entryDate:date};
+          else carrySkips++;
+        } else carrySkips++;
+      }
+    }
+  }
+  // costs (same generic per-instrument model as runBacktest)
+  const tByInst={}; trades.forEach(t=>tByInst[t.instrument]=(tByInst[t.instrument]||0)+1);
+  let costs=0;
+  for(const inst in tByInst){ const n=tByInst[inst]; const lq=SPECS[inst]?SPECS[inst].lot:0; costs+=n*params.brokerage*params.lots; costs+=n*params.slippage*lq*params.lots; }
+  if (carrySkips) { const m='Note: '+carrySkips+' roll(s) skipped - missing 14:00 / next-expiry data.'; console.warn(m); setTimeout(function(){ var e=document.getElementById('status'); if(e) e.textContent=m; }, 80); }
+  return {trades, dailyPnl, costs, carrySkips};
+}
+
 // =============== RENDER ===============
 let pnlChart = null, dailyChart = null;
 
@@ -1341,6 +1456,23 @@ $('runBtn').addEventListener('click', async () => {
     reentrySL:   $('reentrySL').value,
     maxReentries: parseInt($('maxReentries').value) || 0,
   };
+  // 0) Cross Expiry runs in the browser only (the cloud engine doesn't know this strategy).
+  if (params.strategy === 'cross_expiry') {
+    $('status').textContent = 'Loading…';
+    await ensureRangeLoaded($('dateFrom').value, $('dateTo').value);
+    if (!GROUPED) { $('status').textContent = 'No data loaded.'; return; }
+    setTimeout(() => {
+      try {
+        const result = runBacktestCrossExpiry(params);
+        render(result, params);
+        $('status').textContent = `Done · ${result.dailyPnl.length} rolls · ${result.trades.length} trades (cross-expiry, local)` + (result.carrySkips ? ` · ${result.carrySkips} skipped` : '');
+      } catch (e) {
+        console.error(e);
+        $('status').textContent = 'Error: ' + e.message;
+      }
+    }, 50);
+    return;
+  }
   // 1) Try the CLOUD engine first — runs server-side, no browser memory limit, any range.
   try {
     const res = await fetch('/backtest', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(params) });
