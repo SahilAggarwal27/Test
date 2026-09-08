@@ -173,7 +173,7 @@
     <select id="strategy">
       <option value="time_based" selected>Time-Based Short Straddle (sell at entry, exit at exit time)</option>
       <option value="breakdown">Range Breakout (Sell Below Low, SL = High)</option>
-      <option value="cross_expiry">Cross Expiry (2PM Tue/Thu roll — live side into next expiry, other index)</option>
+      <option value="cross_expiry">Cross Expiry (2PM Tue/Thu roll — live side into next expiry, other index; SL = roll-leg 09:20–10:03 high, off after 15:15)</option>
     </select>
 
     <label>Expiry to trade</label>
@@ -1099,10 +1099,11 @@ function runBacktest(params) {
 // CURRENT index's expiry day at 14:00: square the prior roll and open the SAME
 // side ATM in the NEXT expiry (the other index). Side mirrors that day's 10:03
 // live side on the expiring index (flips if its 10:03-candle-high SL was hit
-// before 14:00). Roll-leg SL = the 14:00 entry-bar high (2PM candle high),
-// checked across the whole hold. P&L in points x date-correct lot.
-// Pair is NIFTY <-> SENSEX. Nifty expiry-day 14:00 -> sell next Sensex expiry;
-// Sensex expiry-day 14:00 -> sell next Nifty expiry.
+// before 14:00). Roll-leg SL = that leg's 09:20-10:03 window high on the entry
+// day (same mechanic as the 10:03 strategy), locked for the hold; frozen after
+// 15:15 on the Tue/Thu roll days (SEBI + 3:15-3:30 vol spike). P&L in points x
+// date-correct lot. Pair is NIFTY <-> SENSEX: Nifty expiry-day 14:00 -> sell
+// next Sensex expiry; Sensex expiry-day 14:00 -> sell next Nifty expiry.
 function ceNearestExp(date, inst){
   const g = GROUPED[date] && GROUPED[date][inst]; if(!g) return null;
   let ne=null;
@@ -1123,6 +1124,14 @@ function ceLeg(date, inst, strike, exp, side){
           .map(r=>({time:r.time, p:r[pk], h:(r[pk+'_h']!=null?r[pk+'_h']:r[pk]), l:(r[pk+'_l']!=null?r[pk+'_l']:r[pk])}))
           .filter(r=>r.p!=null)
           .sort((a,b)=>parseTime(a.time)-parseTime(b.time));
+}
+// The 09:20-10:03 window HIGH of a leg (roll-leg SL level, same as the 10:03 strategy's candle high).
+function ceWindowHigh(date, inst, strike, exp, side){
+  const leg=ceLeg(date, inst, strike, exp, side);
+  const a=parseTime('09:20'), b=parseTime('10:03');
+  let hi=null;
+  for(const r of leg){ const m=parseTime(r.time); if(m>=a && m<=b){ if(hi===null||r.h>hi) hi=r.h; } }
+  return hi;
 }
 // The 10:03 live side on the expiring index at `cutoff` (14:00). Fresh 10:03 read:
 // sell whichever leg first breaks below its 10:03-candle low; if that leg's
@@ -1151,11 +1160,14 @@ function ceLiveSide(date, inst, cutoff){
 }
 function runBacktestCrossExpiry(params){
   const ENTRY='14:00', E=parseTime('14:00'), CLOSE=parseTime('15:30');
+  const NOSL_AFTER=parseTime('15:15');   // SEBI: no fresh SL after 15:15 on the roll (Tue/Thu) day — 3:15-3:30 vol spike
   const pair=['NIFTY','SENSEX'];
   const dowArr=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const isTueThu = d => { const w=new Date(d).getDay(); return w===2 || w===4; };  // 2=Tue,4=Thu
   const trades=[], dailyPnl=[]; let carrySkips=0;
   const dates=Object.keys(GROUPED).sort();
   const fromD=(params.dateFrom||'').trim(), toD=(params.dateTo||'').trim();
+  // pos.sl trails the SESSION HIGH of the roll leg since entry (running max of bar highs)
   let pos=null;  // {inst, side, strike, exp, et, ep, sl, entryDate}
   const closeOut=(exitDate,xt,xp,reason)=>{
     const lot=lotFor(pos.inst,exitDate)*params.lots;
@@ -1169,15 +1181,20 @@ function runBacktestCrossExpiry(params){
     if(toD && date>toD) continue;
     const exp={}; for(const ix of pair) exp[ix]=ceNearestExp(date,ix);
     const expiringToday=pair.filter(ix=>exp[ix]===date);
-    // A) manage an open roll across today: SL first (any bar), then square on its expiry day
+    // A) manage an open roll across today: trail SL to session high, stop if breached, then square on its expiry day
     if(pos){
       const isSquareDay=(exp[pos.inst]===date);
       const endM=isSquareDay?E:CLOSE;
       const startM=(date===pos.entryDate)?E:0;
+      // SEBI SL freeze applies on Tue/Thu (the roll days) only; other carry days keep SL live all session
+      const slCutoff=isTueThu(date)?NOSL_AFTER:Infinity;
       const ser=ceLeg(date,pos.inst,pos.strike,pos.exp,pos.side);
       let done=false;
       for(const r of ser){ const m=parseTime(r.time); if(m<startM||m>endM) continue;
-        if(r.h>=pos.sl){ closeOut(date, r.time, pos.sl, 'SL'); done=true; break; } }
+        // SL = the roll leg's 09:20-10:03 window HIGH on the entry day (same mechanic as the 10:03
+        // strategy), locked for the whole hold. Stop if premium reaches it. Frozen after 15:15 on
+        // the Tue/Thu roll days per SEBI; the level itself never moves.
+        if(m<=slCutoff && r.h>=pos.sl){ closeOut(date, r.time, pos.sl, 'SL'); done=true; break; } }
       if(!done && isSquareDay){
         const cand=ser.filter(r=>parseTime(r.time)<=E);
         const bar=cand.length?cand[cand.length-1]:null;
@@ -1192,7 +1209,21 @@ function runBacktestCrossExpiry(params){
         const nexp=ceNearestExp(date, nxt), strike=ceAtm(date, nxt, ENTRY);
         if(nexp && nexp>date && strike!==null){
           const eb=ceLeg(date, nxt, strike, nexp, side).find(r=>parseTime(r.time)>=E);
-          if(eb) pos={inst:nxt, side, strike, exp:nexp, et:eb.time, ep:eb.p, sl:eb.h, entryDate:date};
+          const winHi=ceWindowHigh(date, nxt, strike, nexp, side);   // roll-leg 09:20-10:03 high = SL
+          // Lock the window high as SL — unless premium is already at/above it by 14:00 (that stop is
+          // already blown), in which case fall back to the 14:00 entry-bar high so the roll can breathe.
+          let sl=(winHi!=null)?winHi:(eb?eb.h:null);
+          if(eb && (sl==null || eb.h>=sl)) sl=eb.h;
+          if(eb && sl!=null){
+            pos={inst:nxt, side, strike, exp:nexp, et:eb.time, ep:eb.p, sl, entryDate:date};
+            // Entry day is the roll (Tue/Thu) day: scan its own bars from 14:00 to close for an SL,
+            // honouring the 15:15 freeze. Block A doesn't cover this because the position didn't exist
+            // when A ran earlier in this same date iteration.
+            const slCut=isTueThu(date)?NOSL_AFTER:Infinity;
+            for(const r of ceLeg(date, nxt, strike, nexp, side)){ const m=parseTime(r.time);
+              if(m<=E || m>CLOSE) continue;   // strictly after the entry bar — can't stop on the entry bar itself
+              if(m<=slCut && r.h>=pos.sl){ closeOut(date, r.time, pos.sl, 'SL'); break; } }
+          }
           else carrySkips++;
         } else carrySkips++;
       }
