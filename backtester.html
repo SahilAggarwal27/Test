@@ -304,14 +304,18 @@
     <button id="runBtn" disabled>🚀 Run Backtest</button>
 
     <h3>🔍 Sweep</h3>
-    <span style="font-size:11px;color:#6c7a89"><b>Range Breakout:</b> keeps the window START fixed and sweeps the END up to your limit. <b>Cross Expiry:</b> sweeps the roll/square time <b>at &amp; after 14:00</b> on the Tue/Thu roll days (START is ignored). Ranks which setting made the most (or lost least) over the chosen dates.</span>
+    <span style="font-size:11px;color:#6c7a89"><b>Range Breakout:</b> keeps the window START fixed and sweeps the END up to your limit. <b>Cross Expiry:</b> pick what to sweep below — the roll/square time (14:00 →) or the morning anchor candle (09:21 →, roll fixed 14:00). Ranks which setting made the most (or lost least) over the chosen dates.</span>
+    <select id="sweepMode" style="margin-top:6px">
+      <option value="roll" selected>Cross Expiry — sweep roll time (14:00 → END)</option>
+      <option value="morning">Cross Expiry — sweep morning anchor (09:21 → END, roll fixed 14:00)</option>
+    </select>
     <div class="time-row" style="margin-top:6px">
       <label style="font-weight:400;font-size:12px;flex:0 0 auto">END up to</label>
       <input type="text" id="sweepUntil" value="11:45" style="flex:1">
       <label style="font-weight:400;font-size:12px;flex:0 0 auto">step&nbsp;min</label>
       <input type="number" id="sweepStep" value="1" min="1" max="30" style="flex:1">
     </div>
-    <span style="font-size:11px;color:#6c7a89">Cross Expiry: set "END up to" to the latest roll time to test (e.g. 15:15).</span>
+    <span style="font-size:11px;color:#6c7a89">Cross Expiry: "END up to" = the latest time to test — the roll time (e.g. 15:15) for the roll sweep, or the morning anchor (e.g. 12:30) for the morning sweep.</span>
     <button id="sweepBtn" style="margin-top:6px;background:#5b2a86">🔍 Run Sweep</button>
     <p id="status" style="font-size:12px;color:#6c7a89;margin-top:10px;text-align:center"></p>
   </div>
@@ -1105,8 +1109,9 @@ function runBacktest(params) {
 // 15:15 on the Tue/Thu roll days (SEBI + 3:15-3:30 vol spike). P&L in points x
 // date-correct lot. Pair is NIFTY <-> SENSEX: Nifty expiry-day 14:00 -> sell
 // next Sensex expiry; Sensex expiry-day 14:00 -> sell next Nifty expiry.
-// The roll/square time defaults to 14:00 but can be overridden via params.rollTime
-// (the Sweep tests times at & after 14:00 on the Tue/Thu roll days).
+// The roll/square time defaults to 14:00 but can be overridden via params.rollTime,
+// and the morning anchor candle defaults to 10:03 via params.morningTime (the Sweep
+// tests roll times at & after 14:00, or morning anchors from 09:21, on the Tue/Thu days).
 function ceNearestExp(date, inst){
   const g = GROUPED[date] && GROUPED[date][inst]; if(!g) return null;
   let ne=null;
@@ -1136,23 +1141,25 @@ function ceWindowHigh(date, inst, strike, exp, side){
   for(const r of leg){ const m=parseTime(r.time); if(m>=a && m<=b){ if(hi===null||r.h>hi) hi=r.h; } }
   return hi;
 }
-// Simulate + BOOK the 10:03 single-side straddle on the EXPIRING index from the
-// 10:03 break to the roll/square-up (Tue/Thu roll day). Sell whichever leg first
-// breaks below its 10:03-candle low; SL = that leg's 10:03-candle high. On SL, book
-// the loss and RE-ENTER the same side on any later fresh break below its low (same
-// levels, unlimited up to the cutoff). Whatever side is still short at the cutoff is
-// SQUARED at that price — and that same side is what the roll then carries into the
-// next expiry on the other index. Cutoff = params.rollTime (default 14:00).
+// Simulate + BOOK the single-side straddle on the EXPIRING index from the morning
+// anchor break to the roll/square-up (Tue/Thu roll day). Anchor candle = `morn`
+// (default 10:03): sell whichever leg first breaks below its anchor-candle low;
+// SL = that leg's anchor-candle high. On SL, book the loss and RE-ENTER the same
+// side on any later fresh break below its low (same levels, unlimited up to the
+// cutoff). Whatever side is still short at the cutoff is SQUARED at that price — and
+// that same side is what the roll then carries into the next expiry on the other
+// index. Anchor = params.morningTime (default 10:03); cutoff = params.rollTime (14:00).
 // Returns { side, trades }: side = live side at the cutoff (or null); trades = booked fills.
-function ceMorningLeg(date, inst, cutoff, lot){
+function ceMorningLeg(date, inst, cutoff, lot, morn){
+  morn = morn || '10:03';
   const nexp = ceNearestExp(date, inst); if(!nexp) return {side:null, trades:[]};
-  const atm  = ceAtm(date, inst, '10:03'); if(atm===null) return {side:null, trades:[]};
+  const atm  = ceAtm(date, inst, morn); if(atm===null) return {side:null, trades:[]};
   const ce = ceLeg(date, inst, atm, nexp, 'CE');
   const pe = ceLeg(date, inst, atm, nexp, 'PE');
-  const c0 = ce.find(r=>r.time==='10:03'), p0 = pe.find(r=>r.time==='10:03');
+  const c0 = ce.find(r=>r.time===morn), p0 = pe.find(r=>r.time===morn);
   if(!c0||!p0) return {side:null, trades:[]};
   const ref = { CE:{lo:c0.l, hi:c0.h}, PE:{lo:p0.l, hi:p0.h} };
-  const cutM = parseTime(cutoff), t0 = parseTime('10:03');
+  const cutM = parseTime(cutoff), t0 = parseTime(morn);
   const tmap = {};
   for(const r of ce){ const m=parseTime(r.time); if(m>t0 && m<=cutM) (tmap[r.time]=tmap[r.time]||{}).CE=r; }
   for(const r of pe){ const m=parseTime(r.time); if(m>t0 && m<=cutM) (tmap[r.time]=tmap[r.time]||{}).PE=r; }
@@ -1164,7 +1171,7 @@ function ceMorningLeg(date, inst, cutoff, lot){
     if(live){
       const lr=row[live];
       if(lr){ lastT=t; lastP=lr.p;
-        if(lr.h>=ref[live].hi){                                   // SL (10:03-candle high) hit -> book loss, go flat
+        if(lr.h>=ref[live].hi){                                   // SL (anchor-candle high) hit -> book loss, go flat
           trades.push({side:live, et, ep, xt:t, xp:ref[live].hi, reason:'SL', pnl:(ep-ref[live].hi)*lot});
           live=null;                                              // re-eligible for a fresh break below the low
         }
@@ -1183,6 +1190,7 @@ function ceMorningLeg(date, inst, cutoff, lot){
 function ceLiveSide(date, inst, cutoff){ return ceMorningLeg(date, inst, cutoff, 1).side; }
 function runBacktestCrossExpiry(params){
   const ENTRY=(params.rollTime||'14:00'), E=parseTime(params.rollTime||'14:00'), CLOSE=parseTime('15:30');
+  const MORN=(params.morningTime||'10:03');   // morning anchor candle on the expiring index (low=sell trigger, high=SL)
   const NOSL_AFTER=parseTime('15:15');   // SEBI: no fresh SL after 15:15 on the roll (Tue/Thu) day — 3:15-3:30 vol spike
   const pair=['NIFTY','SENSEX'];
   const dowArr=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -1224,14 +1232,14 @@ function runBacktestCrossExpiry(params){
         if(bar) closeOut(date, bar.time, bar.p, 'ROLL'); else { carrySkips++; pos=null; }
       }
     }
-    // B) on the current index's expiry day: BOOK its 10:03 leg squared at the roll time, then
+    // B) on the current index's expiry day: BOOK its morning-anchor leg squared at the roll time, then
     //    open a fresh roll into the OTHER index's next expiry on the surviving side.
     if(!pos && expiringToday.length===1){
       const cur=expiringToday[0], nxt=pair.find(ix=>ix!==cur);
       const curLot=lotFor(cur,date)*params.lots;
-      const morning=ceMorningLeg(date, cur, ENTRY, curLot);   // 10:03 straddle on the EXPIRING index -> squared at the roll time
+      const morning=ceMorningLeg(date, cur, ENTRY, curLot, MORN);   // morning-anchor straddle on the EXPIRING index -> squared at the roll time
       if(morning.trades.length){
-        const matm=ceAtm(date, cur, '10:03');
+        const matm=ceAtm(date, cur, MORN);
         let mpnl=0, msl=0;
         for(const mt of morning.trades){
           trades.push({date, exitDate:date, instrument:cur, leg:mt.side, strike:matm, et:mt.et, ep:mt.ep, xt:mt.xt, xp:mt.xp, reason:mt.reason, pnl:mt.pnl});
@@ -1728,9 +1736,67 @@ function renderRollSweep(results, base){
   });
 }
 
+// =============== CROSS-EXPIRY MORNING-ANCHOR SWEEP ===============
+// Holds the roll fixed at 14:00 and sweeps the morning anchor candle from 09:21 up
+// to the "END up to" input, ranking net P&L. Finds whether a morning anchor other
+// than 10:03 pays better. Reuses the same "END up to" / "step min" inputs.
+async function sweepMorningTime(){
+  const base = buildParams();
+  $('status').textContent = 'Loading…';
+  await ensureRangeLoaded(base.dateFrom, base.dateTo);
+  if (!GROUPED) { $('status').textContent='No data loaded.'; return; }
+  base.strategy = 'cross_expiry';
+  const startMin = parseTime('09:21');
+  let untilMin = parseTime($('sweepUntil').value||'12:30');
+  if (untilMin <= startMin) untilMin = parseTime('12:30');
+  if (untilMin > parseTime('13:30')) untilMin = parseTime('13:30');   // stay before the 14:00 roll
+  const step = Math.max(1, parseInt($('sweepStep').value)||5);
+  $('status').textContent = 'Running morning-anchor sweep…';
+  const results = [];
+  for (let m = startMin; m <= untilMin; m += step){
+    const morningTime = minToHHMM(m);
+    let r; try { r = runBacktestCrossExpiry({...base, morningTime, rollTime:'14:00'}); } catch(e){ continue; }
+    const net = r.dailyPnl.reduce((s,d)=>s+d.pnl,0) - r.costs;
+    const days = r.dailyPnl.length, wins = r.dailyPnl.filter(d=>d.pnl>0).length;
+    results.push({morningTime, net, days, winPct: days?(wins/days*100):0, trades:r.trades.length});
+  }
+  results.sort((a,b)=>b.net-a.net);
+  renderMorningSweep(results, base);
+  $('status').textContent = `Morning-anchor sweep done · ${results.length} times tested`;
+}
+
+function renderMorningSweep(results, base){
+  const main = $('main');
+  if (!results.length){ main.innerHTML='<div class="empty"><h2>No sweep results</h2><p>Check the date range has Cross-Expiry data.</p></div>'; return; }
+  const best = results[0], worst = results[results.length-1];
+  const rows = results.map((r,i)=>`<tr${i===0?' style="background:#eaf8ee;font-weight:600"':''}>
+    <td>${r.morningTime}</td>
+    <td class="right ${r.net>0?'green':'red'}">${fmt(r.net)}</td>
+    <td class="center">${r.winPct.toFixed(0)}%</td>
+    <td class="center">${r.days}</td><td class="center">${r.trades}</td></tr>`).join('');
+  main.innerHTML = `
+    <div class="dash-grid">
+      <div class="card pos"><div class="t">Best morning anchor</div><div class="v">${best.morningTime}</div><div class="sub2">${fmt(best.net)}</div></div>
+      <div class="card neg"><div class="t">Worst morning anchor</div><div class="v">${worst.morningTime}</div><div class="sub2">${fmt(worst.net)}</div></div>
+      <div class="card"><div class="t">Times tested</div><div class="v">${results.length}</div></div>
+    </div>
+    <div class="chart-wrap"><canvas id="sweepChart" height="90"></canvas></div>
+    <table><thead><tr><th>Morning anchor (roll fixed 14:00)</th><th class="right">Net P&L</th><th class="center">Win%</th><th class="center">Rolls</th><th class="center">Trades</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  const chrono = [...results].sort((a,b)=>parseTime(a.morningTime)-parseTime(b.morningTime));
+  if (window._sweepChart) window._sweepChart.destroy();
+  window._sweepChart = new Chart($('sweepChart').getContext('2d'), {
+    type:'bar',
+    data:{ labels: chrono.map(r=>r.morningTime), datasets:[{label:'Net P&L', data: chrono.map(r=>r.net), backgroundColor: chrono.map(r=>r.net>0?'#2CA02C':'#D62728')}]},
+    options:{responsive:true, maintainAspectRatio:false, animation:false, plugins:{title:{display:true,text:'Net P&L by morning anchor (roll fixed 14:00)'}, legend:{display:false}}}
+  });
+}
+
 $('sweepBtn').addEventListener('click', () => {
-  if ($('strategy').value === 'cross_expiry') sweepRollTime();
-  else sweepRefWindow();
+  if ($('strategy').value === 'cross_expiry') {
+    if (($('sweepMode')||{}).value === 'morning') sweepMorningTime();
+    else sweepRollTime();
+  } else sweepRefWindow();
 });
 
 
