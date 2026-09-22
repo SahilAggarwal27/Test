@@ -303,14 +303,15 @@
 
     <button id="runBtn" disabled>🚀 Run Backtest</button>
 
-    <h3>🔍 Reference-Window Sweep</h3>
-    <span style="font-size:11px;color:#6c7a89">Range Breakout only. Keeps the window START fixed and tries every END from below up to your limit, then ranks which window made the most (or lost least) over the chosen dates.</span>
+    <h3>🔍 Sweep</h3>
+    <span style="font-size:11px;color:#6c7a89"><b>Range Breakout:</b> keeps the window START fixed and sweeps the END up to your limit. <b>Cross Expiry:</b> sweeps the roll/square time <b>at &amp; after 14:00</b> on the Tue/Thu roll days (START is ignored). Ranks which setting made the most (or lost least) over the chosen dates.</span>
     <div class="time-row" style="margin-top:6px">
       <label style="font-weight:400;font-size:12px;flex:0 0 auto">END up to</label>
       <input type="text" id="sweepUntil" value="11:45" style="flex:1">
       <label style="font-weight:400;font-size:12px;flex:0 0 auto">step&nbsp;min</label>
       <input type="number" id="sweepStep" value="1" min="1" max="30" style="flex:1">
     </div>
+    <span style="font-size:11px;color:#6c7a89">Cross Expiry: set "END up to" to the latest roll time to test (e.g. 15:15).</span>
     <button id="sweepBtn" style="margin-top:6px;background:#5b2a86">🔍 Run Sweep</button>
     <p id="status" style="font-size:12px;color:#6c7a89;margin-top:10px;text-align:center"></p>
   </div>
@@ -1104,6 +1105,8 @@ function runBacktest(params) {
 // 15:15 on the Tue/Thu roll days (SEBI + 3:15-3:30 vol spike). P&L in points x
 // date-correct lot. Pair is NIFTY <-> SENSEX: Nifty expiry-day 14:00 -> sell
 // next Sensex expiry; Sensex expiry-day 14:00 -> sell next Nifty expiry.
+// The roll/square time defaults to 14:00 but can be overridden via params.rollTime
+// (the Sweep tests times at & after 14:00 on the Tue/Thu roll days).
 function ceNearestExp(date, inst){
   const g = GROUPED[date] && GROUPED[date][inst]; if(!g) return null;
   let ne=null;
@@ -1134,13 +1137,13 @@ function ceWindowHigh(date, inst, strike, exp, side){
   return hi;
 }
 // Simulate + BOOK the 10:03 single-side straddle on the EXPIRING index from the
-// 10:03 break to the 14:00 SQUARE-UP (Tue/Thu roll day). Sell whichever leg first
+// 10:03 break to the roll/square-up (Tue/Thu roll day). Sell whichever leg first
 // breaks below its 10:03-candle low; SL = that leg's 10:03-candle high. On SL, book
 // the loss and RE-ENTER the same side on any later fresh break below its low (same
-// levels, unlimited up to 14:00). Whatever side is still short at 14:00 is SQUARED at
-// the 14:00 price — and that same side is what the roll then carries into the next
-// expiry on the other index.
-// Returns { side, trades }: side = live side at 14:00 (or null); trades = booked fills.
+// levels, unlimited up to the cutoff). Whatever side is still short at the cutoff is
+// SQUARED at that price — and that same side is what the roll then carries into the
+// next expiry on the other index. Cutoff = params.rollTime (default 14:00).
+// Returns { side, trades }: side = live side at the cutoff (or null); trades = booked fills.
 function ceMorningLeg(date, inst, cutoff, lot){
   const nexp = ceNearestExp(date, inst); if(!nexp) return {side:null, trades:[]};
   const atm  = ceAtm(date, inst, '10:03'); if(atm===null) return {side:null, trades:[]};
@@ -1171,15 +1174,15 @@ function ceMorningLeg(date, inst, cutoff, lot){
       for(const sd of ['CE','PE']){ const rr=row[sd]; if(rr && rr.l<=ref[sd].lo){ live=sd; et=t; ep=ref[sd].lo; lastT=t; lastP=rr.p; break; } }
     }
   }
-  if(live && lastT!==null){                                       // still short at 14:00 -> SQUARE at the 14:00 price
+  if(live && lastT!==null){                                       // still short at the cutoff -> SQUARE at that price
     trades.push({side:live, et, ep, xt:lastT, xp:lastP, reason:'ROLL', pnl:(ep-lastP)*lot});
   }
   return {side:live, trades};
 }
-// Live side at the 14:00 cutoff on the expiring index (the direction the roll carries).
+// Live side at the cutoff on the expiring index (the direction the roll carries).
 function ceLiveSide(date, inst, cutoff){ return ceMorningLeg(date, inst, cutoff, 1).side; }
 function runBacktestCrossExpiry(params){
-  const ENTRY='14:00', E=parseTime('14:00'), CLOSE=parseTime('15:30');
+  const ENTRY=(params.rollTime||'14:00'), E=parseTime(params.rollTime||'14:00'), CLOSE=parseTime('15:30');
   const NOSL_AFTER=parseTime('15:15');   // SEBI: no fresh SL after 15:15 on the roll (Tue/Thu) day — 3:15-3:30 vol spike
   const pair=['NIFTY','SENSEX'];
   const dowArr=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -1221,12 +1224,12 @@ function runBacktestCrossExpiry(params){
         if(bar) closeOut(date, bar.time, bar.p, 'ROLL'); else { carrySkips++; pos=null; }
       }
     }
-    // B) on the current index's expiry day: BOOK its 10:03 leg squared at 14:00, then
+    // B) on the current index's expiry day: BOOK its 10:03 leg squared at the roll time, then
     //    open a fresh roll into the OTHER index's next expiry on the surviving side.
     if(!pos && expiringToday.length===1){
       const cur=expiringToday[0], nxt=pair.find(ix=>ix!==cur);
       const curLot=lotFor(cur,date)*params.lots;
-      const morning=ceMorningLeg(date, cur, ENTRY, curLot);   // 10:03 straddle on the EXPIRING index -> squared at 14:00
+      const morning=ceMorningLeg(date, cur, ENTRY, curLot);   // 10:03 straddle on the EXPIRING index -> squared at the roll time
       if(morning.trades.length){
         const matm=ceAtm(date, cur, '10:03');
         let mpnl=0, msl=0;
@@ -1242,13 +1245,13 @@ function runBacktestCrossExpiry(params){
         if(nexp && nexp>date && strike!==null){
           const eb=ceLeg(date, nxt, strike, nexp, side).find(r=>parseTime(r.time)>=E);
           const winHi=ceWindowHigh(date, nxt, strike, nexp, side);   // roll-leg 09:20-10:03 high = SL (always)
-          // SL is the 09:20-10:03 window high, same as the 10:03 strategy — for the 2 PM roll leg too.
-          // If premium is already past it by 14:00, the position can stop on the entry day itself.
+          // SL is the 09:20-10:03 window high, same as the 10:03 strategy — for the roll leg too.
+          // If premium is already past it by the roll time, the position can stop on the entry day itself.
           // Only fall back to the entry-bar high if the window has no data at all.
           const sl=(winHi!=null)?winHi:(eb?eb.h:null);
           if(eb && sl!=null){
             pos={inst:nxt, side, strike, exp:nexp, et:eb.time, ep:eb.p, sl, entryDate:date};
-            // Entry day is the roll (Tue/Thu) day: scan its bars from 14:00 (inclusive) to close for an
+            // Entry day is the roll (Tue/Thu) day: scan its bars from the roll time (inclusive) to close for an
             // SL, honouring the 15:15 freeze. Block A doesn't cover this because the position didn't
             // exist when A ran earlier in this same date iteration.
             const slCut=isTueThu(date)?NOSL_AFTER:Infinity;
@@ -1265,7 +1268,7 @@ function runBacktestCrossExpiry(params){
   const tByInst={}; trades.forEach(t=>tByInst[t.instrument]=(tByInst[t.instrument]||0)+1);
   let costs=0;
   for(const inst in tByInst){ const n=tByInst[inst]; const lq=SPECS[inst]?SPECS[inst].lot:0; costs+=n*params.brokerage*params.lots; costs+=n*params.slippage*lq*params.lots; }
-  if (carrySkips) { const m='Note: '+carrySkips+' roll(s) skipped - missing 14:00 / next-expiry data.'; console.warn(m); setTimeout(function(){ var e=document.getElementById('status'); if(e) e.textContent=m; }, 80); }
+  if (carrySkips) { const m='Note: '+carrySkips+' roll(s) skipped - missing roll-time / next-expiry data.'; console.warn(m); setTimeout(function(){ var e=document.getElementById('status'); if(e) e.textContent=m; }, 80); }
   return {trades, dailyPnl, costs, carrySkips};
 }
 
@@ -1669,7 +1672,66 @@ function renderSweep(results, base){
   });
 }
 
-$('sweepBtn').addEventListener('click', sweepRefWindow);
+// =============== CROSS-EXPIRY ROLL-TIME SWEEP ===============
+// Sweeps the roll/square time at & after 14:00 on the Tue/Thu roll days and ranks
+// which roll time made the most net P&L over the chosen dates. Reuses the same
+// "END up to" / "step min" inputs as the reference-window sweep.
+async function sweepRollTime(){
+  const base = buildParams();
+  $('status').textContent = 'Loading…';
+  await ensureRangeLoaded(base.dateFrom, base.dateTo);
+  if (!GROUPED) { $('status').textContent='No data loaded.'; return; }
+  base.strategy = 'cross_expiry';
+  const startMin = parseTime('14:00');                        // at & after 2 PM (Tue/Thu roll)
+  let untilMin = parseTime($('sweepUntil').value||'15:15');
+  if (untilMin < startMin) untilMin = parseTime('15:15');     // guard: don't sweep before 14:00
+  if (untilMin > parseTime('15:25')) untilMin = parseTime('15:25');
+  const step = Math.max(1, parseInt($('sweepStep').value)||15);
+  $('status').textContent = 'Running roll-time sweep…';
+  const results = [];
+  for (let m = startMin; m <= untilMin; m += step){
+    const rollTime = minToHHMM(m);
+    let r; try { r = runBacktestCrossExpiry({...base, rollTime}); } catch(e){ continue; }
+    const net = r.dailyPnl.reduce((s,d)=>s+d.pnl,0) - r.costs;
+    const days = r.dailyPnl.length, wins = r.dailyPnl.filter(d=>d.pnl>0).length;
+    results.push({rollTime, net, days, winPct: days?(wins/days*100):0, trades:r.trades.length});
+  }
+  results.sort((a,b)=>b.net-a.net);
+  renderRollSweep(results, base);
+  $('status').textContent = `Roll-time sweep done · ${results.length} times tested`;
+}
+
+function renderRollSweep(results, base){
+  const main = $('main');
+  if (!results.length){ main.innerHTML='<div class="empty"><h2>No sweep results</h2><p>Check the date range has Cross-Expiry data.</p></div>'; return; }
+  const best = results[0], worst = results[results.length-1];
+  const rows = results.map((r,i)=>`<tr${i===0?' style="background:#eaf8ee;font-weight:600"':''}>
+    <td>${r.rollTime}</td>
+    <td class="right ${r.net>0?'green':'red'}">${fmt(r.net)}</td>
+    <td class="center">${r.winPct.toFixed(0)}%</td>
+    <td class="center">${r.days}</td><td class="center">${r.trades}</td></tr>`).join('');
+  main.innerHTML = `
+    <div class="dash-grid">
+      <div class="card pos"><div class="t">Best roll time</div><div class="v">${best.rollTime}</div><div class="sub2">${fmt(best.net)}</div></div>
+      <div class="card neg"><div class="t">Worst roll time</div><div class="v">${worst.rollTime}</div><div class="sub2">${fmt(worst.net)}</div></div>
+      <div class="card"><div class="t">Times tested</div><div class="v">${results.length}</div></div>
+    </div>
+    <div class="chart-wrap"><canvas id="sweepChart" height="90"></canvas></div>
+    <table><thead><tr><th>Roll time (Tue/Thu, ≥ 14:00)</th><th class="right">Net P&L</th><th class="center">Win%</th><th class="center">Rolls</th><th class="center">Trades</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  const chrono = [...results].sort((a,b)=>parseTime(a.rollTime)-parseTime(b.rollTime));
+  if (window._sweepChart) window._sweepChart.destroy();
+  window._sweepChart = new Chart($('sweepChart').getContext('2d'), {
+    type:'bar',
+    data:{ labels: chrono.map(r=>r.rollTime), datasets:[{label:'Net P&L', data: chrono.map(r=>r.net), backgroundColor: chrono.map(r=>r.net>0?'#2CA02C':'#D62728')}]},
+    options:{responsive:true, maintainAspectRatio:false, animation:false, plugins:{title:{display:true,text:'Net P&L by roll time (Tue/Thu, 14:00 onwards)'}, legend:{display:false}}}
+  });
+}
+
+$('sweepBtn').addEventListener('click', () => {
+  if ($('strategy').value === 'cross_expiry') sweepRollTime();
+  else sweepRefWindow();
+});
 
 
 /* --- per-instrument P&L strip at top of dashboard (added) --- */
