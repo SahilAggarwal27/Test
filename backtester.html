@@ -1135,7 +1135,8 @@ function ceWindowHigh(date, inst, strike, exp, side){
 }
 // The 10:03 live side on the expiring index at `cutoff` (14:00). Fresh 10:03 read:
 // sell whichever leg first breaks below its 10:03-candle low; if that leg's
-// 10:03-candle high is hit, it's stopped and the other leg becomes eligible.
+// 10:03-candle high is hit, it's stopped and RE-ENTERS the SAME side at the SAME
+// levels on any later fresh break below its low (Tue/Thu, pre-14:00 — unlimited).
 // Returns 'CE' | 'PE' | null (null = nothing live at the cutoff -> no roll).
 function ceLiveSide(date, inst, cutoff){
   const nexp = ceNearestExp(date, inst); if(!nexp) return null;
@@ -1150,11 +1151,15 @@ function ceLiveSide(date, inst, cutoff){
   for(const r of ce){ const m=parseTime(r.time); if(m>t0 && m<=cutM) (tmap[r.time]=tmap[r.time]||{}).CE=r; }
   for(const r of pe){ const m=parseTime(r.time); if(m>t0 && m<=cutM) (tmap[r.time]=tmap[r.time]||{}).PE=r; }
   const times = Object.keys(tmap).sort((a,b)=>parseTime(a)-parseTime(b));
-  let live=null; const stopped={CE:false, PE:false};
+  // Re-entry (Tue/Thu, pre-14:00): a live leg that hits its 10:03-candle high stops out
+  // and goes flat, then RE-ENTERS the SAME side at the SAME levels on any later fresh
+  // break below its 10:03-candle low — unlimited times up to the 14:00 cutoff. Whichever
+  // side is live at 14:00 is the one that gets rolled. (No permanent stop-out exclusion.)
+  let live=null;
   for(const t of times){
     const row = tmap[t];
-    if(live){ const lr=row[live]; if(lr && lr.h>=ref[live].hi){ stopped[live]=true; live=null; } }
-    if(!live){ for(const sd of ['CE','PE']){ if(stopped[sd]) continue; const rr=row[sd]; if(rr && rr.l<=ref[sd].lo){ live=sd; break; } } }
+    if(live){ const lr=row[live]; if(lr && lr.h>=ref[live].hi){ live=null; } }               // SL hit -> flat, re-eligible
+    if(!live){ for(const sd of ['CE','PE']){ const rr=row[sd]; if(rr && rr.l<=ref[sd].lo){ live=sd; break; } } }  // (re-)enter same/either side
   }
   return live;
 }
