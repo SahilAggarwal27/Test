@@ -1133,36 +1133,51 @@ function ceWindowHigh(date, inst, strike, exp, side){
   for(const r of leg){ const m=parseTime(r.time); if(m>=a && m<=b){ if(hi===null||r.h>hi) hi=r.h; } }
   return hi;
 }
-// The 10:03 live side on the expiring index at `cutoff` (14:00). Fresh 10:03 read:
-// sell whichever leg first breaks below its 10:03-candle low; if that leg's
-// 10:03-candle high is hit, it's stopped and RE-ENTERS the SAME side at the SAME
-// levels on any later fresh break below its low (Tue/Thu, pre-14:00 — unlimited).
-// Returns 'CE' | 'PE' | null (null = nothing live at the cutoff -> no roll).
-function ceLiveSide(date, inst, cutoff){
-  const nexp = ceNearestExp(date, inst); if(!nexp) return null;
-  const atm  = ceAtm(date, inst, '10:03'); if(atm===null) return null;
+// Simulate + BOOK the 10:03 single-side straddle on the EXPIRING index from the
+// 10:03 break to the 14:00 SQUARE-UP (Tue/Thu roll day). Sell whichever leg first
+// breaks below its 10:03-candle low; SL = that leg's 10:03-candle high. On SL, book
+// the loss and RE-ENTER the same side on any later fresh break below its low (same
+// levels, unlimited up to 14:00). Whatever side is still short at 14:00 is SQUARED at
+// the 14:00 price — and that same side is what the roll then carries into the next
+// expiry on the other index.
+// Returns { side, trades }: side = live side at 14:00 (or null); trades = booked fills.
+function ceMorningLeg(date, inst, cutoff, lot){
+  const nexp = ceNearestExp(date, inst); if(!nexp) return {side:null, trades:[]};
+  const atm  = ceAtm(date, inst, '10:03'); if(atm===null) return {side:null, trades:[]};
   const ce = ceLeg(date, inst, atm, nexp, 'CE');
   const pe = ceLeg(date, inst, atm, nexp, 'PE');
   const c0 = ce.find(r=>r.time==='10:03'), p0 = pe.find(r=>r.time==='10:03');
-  if(!c0||!p0) return null;
+  if(!c0||!p0) return {side:null, trades:[]};
   const ref = { CE:{lo:c0.l, hi:c0.h}, PE:{lo:p0.l, hi:p0.h} };
   const cutM = parseTime(cutoff), t0 = parseTime('10:03');
   const tmap = {};
   for(const r of ce){ const m=parseTime(r.time); if(m>t0 && m<=cutM) (tmap[r.time]=tmap[r.time]||{}).CE=r; }
   for(const r of pe){ const m=parseTime(r.time); if(m>t0 && m<=cutM) (tmap[r.time]=tmap[r.time]||{}).PE=r; }
   const times = Object.keys(tmap).sort((a,b)=>parseTime(a)-parseTime(b));
-  // Re-entry (Tue/Thu, pre-14:00): a live leg that hits its 10:03-candle high stops out
-  // and goes flat, then RE-ENTERS the SAME side at the SAME levels on any later fresh
-  // break below its 10:03-candle low — unlimited times up to the 14:00 cutoff. Whichever
-  // side is live at 14:00 is the one that gets rolled. (No permanent stop-out exclusion.)
-  let live=null;
+  const trades=[];
+  let live=null, et=null, ep=null, lastT=null, lastP=null;
   for(const t of times){
-    const row = tmap[t];
-    if(live){ const lr=row[live]; if(lr && lr.h>=ref[live].hi){ live=null; } }               // SL hit -> flat, re-eligible
-    if(!live){ for(const sd of ['CE','PE']){ const rr=row[sd]; if(rr && rr.l<=ref[sd].lo){ live=sd; break; } } }  // (re-)enter same/either side
+    const row=tmap[t];
+    if(live){
+      const lr=row[live];
+      if(lr){ lastT=t; lastP=lr.p;
+        if(lr.h>=ref[live].hi){                                   // SL (10:03-candle high) hit -> book loss, go flat
+          trades.push({side:live, et, ep, xt:t, xp:ref[live].hi, reason:'SL', pnl:(ep-ref[live].hi)*lot});
+          live=null;                                              // re-eligible for a fresh break below the low
+        }
+      }
+    }
+    if(!live){                                                    // flat -> (re-)enter same/either side on break below its low
+      for(const sd of ['CE','PE']){ const rr=row[sd]; if(rr && rr.l<=ref[sd].lo){ live=sd; et=t; ep=ref[sd].lo; lastT=t; lastP=rr.p; break; } }
+    }
   }
-  return live;
+  if(live && lastT!==null){                                       // still short at 14:00 -> SQUARE at the 14:00 price
+    trades.push({side:live, et, ep, xt:lastT, xp:lastP, reason:'ROLL', pnl:(ep-lastP)*lot});
+  }
+  return {side:live, trades};
 }
+// Live side at the 14:00 cutoff on the expiring index (the direction the roll carries).
+function ceLiveSide(date, inst, cutoff){ return ceMorningLeg(date, inst, cutoff, 1).side; }
 function runBacktestCrossExpiry(params){
   const ENTRY='14:00', E=parseTime('14:00'), CLOSE=parseTime('15:30');
   const NOSL_AFTER=parseTime('15:15');   // SEBI: no fresh SL after 15:15 on the roll (Tue/Thu) day — 3:15-3:30 vol spike
@@ -1206,10 +1221,22 @@ function runBacktestCrossExpiry(params){
         if(bar) closeOut(date, bar.time, bar.p, 'ROLL'); else { carrySkips++; pos=null; }
       }
     }
-    // B) open a fresh roll on the current index's expiry day, into the OTHER index's next expiry
+    // B) on the current index's expiry day: BOOK its 10:03 leg squared at 14:00, then
+    //    open a fresh roll into the OTHER index's next expiry on the surviving side.
     if(!pos && expiringToday.length===1){
       const cur=expiringToday[0], nxt=pair.find(ix=>ix!==cur);
-      const side=ceLiveSide(date, cur, ENTRY);
+      const curLot=lotFor(cur,date)*params.lots;
+      const morning=ceMorningLeg(date, cur, ENTRY, curLot);   // 10:03 straddle on the EXPIRING index -> squared at 14:00
+      if(morning.trades.length){
+        const matm=ceAtm(date, cur, '10:03');
+        let mpnl=0, msl=0;
+        for(const mt of morning.trades){
+          trades.push({date, exitDate:date, instrument:cur, leg:mt.side, strike:matm, et:mt.et, ep:mt.ep, xt:mt.xt, xp:mt.xp, reason:mt.reason, pnl:mt.pnl});
+          mpnl+=mt.pnl; if(mt.reason==='SL') msl++;
+        }
+        dailyPnl.push({date, dow:dowArr[(new Date(date).getDay()+6)%7], instrument:cur, atm:matm, pnl:mpnl, nTrades:morning.trades.length, slHits:msl});
+      }
+      const side=morning.side;
       if(side){
         const nexp=ceNearestExp(date, nxt), strike=ceAtm(date, nxt, ENTRY);
         if(nexp && nexp>date && strike!==null){
