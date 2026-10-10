@@ -25,7 +25,9 @@ done
 [ "$(stat -c%s backtester.html)" -gt 50000 ] || { echo "$(date) file too small"; rm -rf "$TMP"; exit 1; }
 cp "$DIR/backtester.html" "$DIR/backtester.html.prev" 2>/dev/null
 cp backtester.html "$DIR/backtester.html"
-cp update.sh "$DIR/update.sh"
+if [ -f engine.js ] && [ -d "$DIR/engine" ] && ! cmp -s engine.js "$DIR/engine/engine.js"; then
+  cp engine.js "$DIR/engine/engine.js"; systemctl restart bt-engine 2>/dev/null; echo "$(date) engine.js updated"
+fi
 echo "$SHA" > "$DIR/.deployed_sha"
 echo "$(date) deployed ${SHA:0:7} ($(echo $FILES))"
-rm -rf "$TMP"
+cp update.sh "$DIR/update.sh"; rm -rf "$TMP"; exit 0
