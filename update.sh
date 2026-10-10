@@ -1,7 +1,7 @@
 #!/bin/bash
 # Auto-deploy backtester.html from the repo (public, or private with /root/.ghtoken).
-# Runs every 2 min via cron (installs itself). Applies all patch_*.py / fix_*.py
-# that target backtester.html (scripts using BT_HTML); server patches are skipped.
+# Runs every 2 min via cron (installs itself). Applies patch_backtester.py + all fix_*.py
+# (fix_*.py = backtester.html patches only; server-side scripts use other names).
 # Only swaps the live file if every patch succeeds. Previous copy: backtester.html.prev
 DIR=/root/kite
 TOKEN=$(cat /root/.ghtoken 2>/dev/null)   # optional; only needed if the repo is private
@@ -21,10 +21,9 @@ TMP=$(mktemp -d)
 get(){ curl -sf -H "$H1" -H "Accept: application/vnd.github.raw" "$API/contents/$1?ref=$SHA" -o "$TMP/$1"; }
 
 get backtester.html || { echo "$(date) fetch failed"; rm -rf "$TMP"; exit 1; }
-FILES=$(curl -sf -H "$H1" "$API/contents?ref=$SHA" | python3 -c "import sys,json;print(' '.join(sorted(x['name'] for x in json.load(sys.stdin) if x['name'].endswith('.py') and x['name'].startswith(('patch_','fix_')))))")
+FILES=$(curl -sf -H "$H1" "$API/contents?ref=$SHA" | python3 -c "import sys,json;print(' '.join(sorted(x['name'] for x in json.load(sys.stdin) if x['name'].endswith('.py') and (x['name'].startswith('fix_') or x['name']=='patch_backtester.py'))))")
 for f in $FILES; do
   get "$f" || { echo "$(date) fetch $f failed"; rm -rf "$TMP"; exit 1; }
-  grep -q BT_HTML "$TMP/$f" || continue   # only scripts that patch backtester.html (skip server patches)
   (cd "$TMP" && BT_HTML="$TMP/backtester.html" python3 "$f") || { echo "$(date) $f FAILED - live file untouched"; rm -rf "$TMP"; exit 1; }
 done
 
