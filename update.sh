@@ -1,12 +1,11 @@
 #!/bin/bash
-# Auto-deploy backtester.html from the PRIVATE repo. No more public/private flips.
+# Auto-deploy backtester.html from the repo (public, or private with /root/.ghtoken).
 # Runs every 2 min via cron (installs itself). Applies all patch_*.py / fix_*.py.
 # Only swaps the live file if every patch succeeds. Previous copy: backtester.html.prev
 DIR=/root/kite
-TOKEN=$(cat /root/.ghtoken 2>/dev/null)
-[ -z "$TOKEN" ] && { echo "no token in /root/.ghtoken"; exit 1; }
+TOKEN=$(cat /root/.ghtoken 2>/dev/null)   # optional; only needed if the repo is private
 API=https://api.github.com/repos/SahilAggarwal27/Test
-H1="Authorization: Bearer $TOKEN"
+if [ -n "$TOKEN" ]; then H1="Authorization: Bearer $TOKEN"; else H1="X-No-Auth: 1"; fi
 
 # self-install cron
 if ! crontab -l 2>/dev/null | grep -q "kite/update.sh"; then
