@@ -16,7 +16,17 @@ fn = m.group(0)
 q = re.search(r'f?"""\s*SELECT.*?"""', fn, re.S | re.I)
 if not q: sys.exit("ABORT: SELECT block not found - nothing changed")
 old = q.group(0)
-if old.count("?") != 4 or not re.search(r"yr\s+BETWEEN\s+\?\s+AND\s+\?", old, re.I):
+# keep every "? AND ?" pair in its original order (params are positional)
+conds = []
+for mm in re.finditer(r"BETWEEN\s+\?\s+AND\s+\?", old, re.I):
+    before = old[max(0, mm.start() - 45):mm.start()]
+    if re.search(r"\byr\s*$", before.strip() + " ", re.I) or re.search(r"\.?yr\s*$", before.rstrip()):
+        conds.append("yr BETWEEN ? AND ?")
+    elif "substr" in before.split("AND")[-1] or "substr" in before[-30:]:
+        conds.append("substr(datetime,1,10) BETWEEN ? AND ?")
+    else:
+        conds.append("(CAST(? AS VARCHAR) IS NULL OR TRUE) AND (CAST(? AS VARCHAR) IS NULL OR TRUE)")   # unused param pair
+if old.count("?") != 2 * len(conds) or "yr BETWEEN ? AND ?" not in conds or "substr(datetime,1,10) BETWEEN ? AND ?" not in conds:
     sys.exit("ABORT: unexpected query shape - nothing changed\n" + old)
 order = re.search(r"ORDER\s+BY.*?(?=\"\"\")", old, re.S | re.I)
 order = order.group(0).strip() if order else ""
@@ -25,8 +35,7 @@ pq = re.search(r"read_parquet\('([^']+)'", old)
 pqexpr = pq.group(1) if pq else "{PQ.as_posix()}/*/*.parquet"
 new = ('f"""SELECT instrument, datetime, spot, strike, expiry, ce_ltp, pe_ltp, ce_h, ce_l, pe_h, pe_l\n'
        f"            FROM read_parquet('{pqexpr}', hive_partitioning=true, union_by_name=true)\n"
-       "            WHERE yr BETWEEN ? AND ?\n"
-       "              AND substr(datetime,1,10) BETWEEN ? AND ?\n"
+       "            WHERE " + "\n              AND ".join(conds) + "\n"
        "              AND (spot IS NULL OR abs(strike - spot) <= 10 * (CASE WHEN instrument = 'NIFTY' THEN 50 ELSE 100 END))\n"
        f'            {order}"""')
 newsrc = src.replace(fn, fn.replace(old, new) + "\n# FASTSLICE", 1)
