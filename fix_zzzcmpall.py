@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# "Compare ALL": Cross Expiry + all 4 Range Breakout Tue/Thu variants on the same dates, one screen:
+# "Compare ALL": Cross Expiry + all Range Breakout Tue/Thu variants on the same dates, one screen:
 # KPI table (best per row highlighted), all equity curves on one chart, day-by-day table.
 # Runs on the server engine (kind compare_all, one data pass) when connected, else in the browser.
 import io, os, sys, shutil
@@ -13,11 +13,11 @@ A = "</script>\n</body>"
 key = O if s.count(O) == 1 else O2
 if s.count(key) != 1 or s.count(A) != 1 or "function cmpStats" not in s:
     print("ABORT: anchor not found."); sys.exit(1)
-s = s.replace(key, '      <option value="compare_all">\u2696\ufe0f Compare ALL: Cross Expiry vs every Range Breakout Tue/Thu variant</option>\n' + key)
+s = s.replace(key, '      <option value="compare_all">\u2696\ufe0f Compare ALL: Cross Expiry vs all Range Breakout Tue/Thu variants</option>\n' + key)
 JS = r"""
 /*CMPALL*/
 (function(){
-  const MODES = [['carry','RB \u2014 carry 10:03'],['hold','RB \u2014 Tue/Thu 15:25'],['sq14','RB \u2014 Tue/Thu 14:00'],['roll14','RB \u2014 14:00 roll']];
+  const MODES = [['carry','RB \u2014 Tue/Thu sq 15:25'],['sq14','RB \u2014 Tue/Thu sq 14:00'],['roll14','RB \u2014 Tue/Thu 14:00 roll']];
   const COLS = ['#1F3864','#e67e22','#16a085','#8e44ad','#c0392b'];
   const rbP = (base, m) => ({...base, strategy:'breakdown', reentryMode:'original', reentrySL:'samesl', maxReentries:50, carry:'nextday', rbExpMode:m});
   function renderAll(list, base){

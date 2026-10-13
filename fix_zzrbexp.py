@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # Range Breakout: Tue/Thu (expiry-day) handling, picked from a dropdown (rbExpMode):
 #  carry   = current: carried position squares next day at the carry time (10:03); expiry-day entry squares at exit time
-#  hold    = carried position is held through the expiry day and squared at the exit time (15:25)
-#  sq14    = everything on the expiring contract squares at 14:00 on the expiry day, no roll
-#  roll14  = on the expiry day everything on the expiring contract squares at 14:00; at 14:00 the live side is rolled
+#  sq14    = the expiry-day entry squares at 14:00 instead of 15:25 (carried position still exits at 10:03), no roll
+#  roll14  = the expiry-day entry squares at 14:00 (carried position still exits at 10:03); at 14:00 the live side is rolled
 #            into the NEXT expiry (other index) exactly like Cross Expiry (ATM at 10:03, market entry, SL = 09:20-10:03
 #            window high, 15:15 freeze on Tue/Thu) and squared the next trading day at 10:03
 import io, os, sys, shutil
@@ -25,7 +24,7 @@ s = s.replace(A1, A1 +
 "      const rbIsExp = d => (typeof ceCalendarExp === 'function')\n"
 "        ? (ceCalendarExp(d, inst) === d && (!tgt || Math.abs((new Date(tgt) - new Date(d)) / 86400000) <= 1))\n"
 "        : (!!tgt && d === tgt);\n"
-"      const rbCut = d => (rbx !== 'carry' && rbIsExp(d)) ? ((rbx === 'roll14' || rbx === 'sq14') ? rbRollM : exitMin) : parseTime(params.carryExitTime || params.exitTime);\n")
+"      const rbCut = d => parseTime(params.carryExitTime || params.exitTime);   // carried position always exits next day at the carry time (10:03)\n")
 
 # 2) carried position: cut-off on the next day depends on whether that day is the contract's expiry
 A2 = "          const same = mseries(nd).filter(r => parseTime(r.time) <= carryExitMin).slice().sort(byTimeB);"
@@ -102,7 +101,6 @@ s = s.replace(A7, A7 +
 "      <label>Range Breakout \u2014 Tue/Thu (expiry day)</label>\n"
 "      <select id=\"rbExpMode\" style=\"width:100%\">\n"
 "        <option value=\"carry\">Carry squares at carry time (10:03); expiry-day entry at exit time</option>\n"
-"        <option value=\"hold\">Hold to expiry \u2014 square everything at exit time (15:25)</option>\n"
 "        <option value=\"sq14\">Square everything at 14:00 (no roll)</option>\n"
 "        <option value=\"roll14\">14:00 square + roll live side to next expiry (Cross Expiry logic), exit next day 10:03</option>\n"
 "      </select>\n"
@@ -122,4 +120,4 @@ s = s.replace(A8, r"""
 
 shutil.copyfile(P, P + ".bak13")
 io.open(P, "w", encoding="utf-8").write(s)
-print("Range Breakout Tue/Thu modes added (carry / hold 15:25 / 14:00 roll).")
+print("Range Breakout Tue/Thu modes added (carry / 14:00 / 14:00 roll).")

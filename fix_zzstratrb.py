@@ -14,14 +14,14 @@ A = "</script>\n</body>"
 for a in (B, C, W, A):
     if s.count(a) != 1:
         print("ABORT: anchor not found: " + a[:60]); sys.exit(1)
-V = [('hold', 'Tue/Thu hold till 15:25'), ('sq14', 'Tue/Thu square 14:00'), ('roll14', 'Tue/Thu 14:00 roll (Cross Expiry logic, exit next day 10:03)')]
+V = [('sq14', 'Tue/Thu square 14:00'), ('roll14', 'Tue/Thu 14:00 roll (Cross Expiry logic, exit next day 10:03)')]
 s = s.replace(B, B.replace('<option ', '<option data-rb="carry" ') +
               ''.join('      <option value="breakdown" data-rb="%s">Range Breakout \u2014 %s</option>\n' % v for v in V))
 s = s.replace(C, C.replace('<option ', '<option data-rb="carry" ') +
               ''.join('      <option value="compare" data-rb="%s">\u2696\ufe0f Compare: Cross Expiry vs Range Breakout \u2014 %s</option>\n' % v for v in V))
 s = s.replace(W, W.replace('<div style="margin-top:8px">', '<div id="rbExpWrap" style="display:none;margin-top:8px">'))
 if s.count(N) == 1:
-    s = s.replace(N, "  const RBL={carry:'',hold:' \u2014 Tue/Thu 15:25',sq14:' \u2014 Tue/Thu 14:00',roll14:' \u2014 14:00 roll'};\n"
+    s = s.replace(N, "  const RBL={carry:'',sq14:' \u2014 Tue/Thu 14:00',roll14:' \u2014 14:00 roll'};\n"
                      "  const NA='Cross Expiry', NB='Range Breakout (Low / SL High)'+(RBL[base.rbExpMode]||'');")
 s = s.replace(A, r"""
 /*STRATRB*/
