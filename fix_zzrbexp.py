@@ -2,6 +2,7 @@
 # Range Breakout: Tue/Thu (expiry-day) handling, picked from a dropdown (rbExpMode):
 #  carry   = current: carried position squares next day at the carry time (10:03); expiry-day entry squares at exit time
 #  hold    = carried position is held through the expiry day and squared at the exit time (15:25)
+#  sq14    = everything on the expiring contract squares at 14:00 on the expiry day, no roll
 #  roll14  = on the expiry day everything on the expiring contract squares at 14:00; at 14:00 a fresh position is
 #            opened on the NEXT expiry (other index), ATM at 10:03, using that contract's 09:20-10:03 Low (sell
 #            trigger) / High (SL); it is squared the same day at the exit time (15:25)
@@ -24,7 +25,7 @@ s = s.replace(A1, A1 +
 "      const rbIsExp = d => (typeof ceCalendarExp === 'function')\n"
 "        ? (ceCalendarExp(d, inst) === d && (!tgt || Math.abs((new Date(tgt) - new Date(d)) / 86400000) <= 1))\n"
 "        : (!!tgt && d === tgt);\n"
-"      const rbCut = d => (rbx !== 'carry' && rbIsExp(d)) ? (rbx === 'roll14' ? rbRollM : exitMin) : parseTime(params.carryExitTime || params.exitTime);\n")
+"      const rbCut = d => (rbx !== 'carry' && rbIsExp(d)) ? ((rbx === 'roll14' || rbx === 'sq14') ? rbRollM : exitMin) : parseTime(params.carryExitTime || params.exitTime);\n")
 
 # 2) carried position: cut-off on the next day depends on whether that day is the contract's expiry
 A2 = "          const same = mseries(nd).filter(r => parseTime(r.time) <= carryExitMin).slice().sort(byTimeB);"
@@ -34,12 +35,12 @@ s = s.replace(A2, "          const same = mseries(nd).filter(r => parseTime(r.ti
 # 3) entry made on the expiry day itself: 14:00 in roll mode, else exit time (breakdown block = first occurrence)
 A3 = "          if (expToday) sqTo = exitMin;"
 must(A3, 2)
-s = s.replace(A3, "          if (expToday) sqTo = (rbx === 'roll14') ? rbRollM : exitMin;", 1)
+s = s.replace(A3, "          if (expToday) sqTo = (rbx === 'roll14' || rbx === 'sq14') ? rbRollM : exitMin;", 1)
 
 # 4) same-day (intraday) mode on expiry day in roll mode -> 14:00
 A4 = "          return tm > refEndMin && tm <= exitMin;"
 must(A4)
-s = s.replace(A4, "          return tm > refEndMin && tm <= ((rbx === 'roll14' && rbIsExp(date)) ? rbRollM : exitMin);")
+s = s.replace(A4, "          return tm > refEndMin && tm <= (((rbx === 'roll14' || rbx === 'sq14') && rbIsExp(date)) ? rbRollM : exitMin);")
 
 # 5) 14:00 roll into the next expiry (other index)
 A5 = "    const reOpts = { reentryMode: params.reentryMode, reentrySL: params.reentrySL, maxReentries: params.maxReentries };\n"
@@ -100,6 +101,7 @@ s = s.replace(A7, A7 +
 "      <select id=\"rbExpMode\" style=\"width:100%\">\n"
 "        <option value=\"carry\">Carry squares at carry time (10:03); expiry-day entry at exit time</option>\n"
 "        <option value=\"hold\">Hold to expiry \u2014 square everything at exit time (15:25)</option>\n"
+"        <option value=\"sq14\">Square everything at 14:00 (no roll)</option>\n"
 "        <option value=\"roll14\">14:00 square + roll to next expiry (10:03 Low/High), square at exit time (15:25)</option>\n"
 "      </select>\n"
 "    </div>\n")
@@ -118,4 +120,4 @@ s = s.replace(A8, r"""
 
 shutil.copyfile(P, P + ".bak13")
 io.open(P, "w", encoding="utf-8").write(s)
-print("Range Breakout Tue/Thu modes added (carry / hold 15:25 / 14:00 roll).")
+print("Range Breakout Tue/Thu modes added (carry / hold 15:25 / 14:00 / 14:00 roll).")
