@@ -153,7 +153,7 @@ async function runJob(job) {
   const ce = { trades: [], daily: new Map(), byInst: new Map(), costs: 0, carrySkips: 0 };
   const dy = { trades: [], daily: [], costs: 0, carrySkips: 0 };
   const RBM = ['carry', 'sq14', 'roll14'];
-  const CEM = ['sq14', 'roll1525', 'roll1003'];
+  const CEM = ['live', 'sq14', 'roll1525', 'roll1003'];
   const ces = {}; for (const m of CEM) ces[m] = { trades: [], daily: new Map(), costs: 0, carrySkips: 0 };
   const dys = {}; for (const m of RBM) dys[m] = { trades: [], daily: [], costs: 0, carrySkips: 0 };
   const rbParams = (kind === 'compare' || kind === 'compare_all')
