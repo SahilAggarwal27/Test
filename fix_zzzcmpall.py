@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # "Compare ALL": Cross Expiry + all Range Breakout Tue/Thu variants on the same dates, one screen:
 # KPI table (best per row highlighted), all equity curves on one chart, day-by-day table.
-# Also "Compare: Range Breakout Tue/Thu square 15:25 vs 14:00" (two RB columns only).
+# Also "Compare: Range Breakout Tue/Thu square 15:25 vs 14:00" and "Compare: Cross Expiry - all 3 scenarios".
 # Runs on the server engine (kind compare_all, one data pass) when connected, else in the browser.
 import io, os, sys, shutil
 P = os.environ.get("BT_HTML", "backtester.html")
@@ -57,8 +57,28 @@ JS = r"""
     window._cmpChart = new Chart($('cmpChart').getContext('2d'), { type:'line', data:{labels:dates.map(fmtD), datasets:ds},
       options:{ responsive:true, maintainAspectRatio:false, animation:false, plugins:{ title:{display:true, text:'Cumulative P&L (gross) \u2014 all strategies'} } } });
   }
+  const CEM = [['sq14','CE 1) square all 14:00'],['roll1525','CE 2) next-expiry, sq 15:25'],['roll1003','CE 3) next-expiry, next day 10:03']];
+  async function runCE3(base){
+    if (window.__srvOK && window.__srvRun) {
+      try {
+        const res = await window.__srvRun('compare_ce', base);
+        if (res && res.ce3) { renderAll(CEM.map(([m,nm]) => ({m, name:nm, st:cmpStats(res.ce3[m])})), base);
+          $('status').textContent = 'Compare done on server \u00b7 ' + fmtD(base.dateFrom) + ' \u2192 ' + fmtD(base.dateTo); return; }
+        throw new Error('engine not updated yet');
+      } catch (e) { console.error(e); $('status').textContent = 'Server: ' + e.message + ' \u2014 running in browser\u2026'; }
+    }
+    await ensureRangeLoaded(base.dateFrom, base.dateTo);
+    if (!GROUPED) { $('status').textContent = 'No data loaded.'; return; }
+    setTimeout(() => {
+      try { renderAll(CEM.map(([m,nm]) => ({m, name:nm, st:cmpStats(runBacktestCrossExpiry({...base, strategy:'cross_expiry', ceMode:m}))})), base);
+        $('status').textContent = 'Compare done \u00b7 ' + fmtD(base.dateFrom) + ' \u2192 ' + fmtD(base.dateTo); }
+      catch (e) { console.error(e); $('status').textContent = 'Error: ' + e.message; }
+    }, 50);
+  }
   async function runCompareAll(){
     const base = buildParams();
+    if (!base.dateFrom || !base.dateTo) { $('status').textContent = 'Pick From and To dates first.'; return; }
+    if ($('strategy').value === 'compare_ce') return runCE3(base);
     const only = $('strategy').value === 'compare_rb' ? ['carry','sq14'] : null;   // RB 15:25 vs RB 14:00 only
     const pick = list => only ? list.filter(x => only.includes(x.m)) : list;
     if (!base.dateFrom || !base.dateTo) { $('status').textContent = 'Pick From and To dates first.'; return; }
@@ -86,7 +106,7 @@ JS = r"""
   }
   window.runCompareAll = runCompareAll;
   const sel = $('strategy');
-  const isAll = () => sel.value === 'compare_all' || sel.value === 'compare_rb';
+  const isAll = () => ['compare_all','compare_rb','compare_ce'].includes(sel.value);
   const ui = () => { if (isAll()) { $('rangeFields').style.display='block'; $('timeFields').style.display='none'; $('slField').style.display='none'; $('slNote').style.display='none'; } };
   sel.addEventListener('change', ui); ui();
   $('runBtn').addEventListener('click', (e) => { if (isAll()) { e.stopImmediatePropagation(); runCompareAll(); } }, true);

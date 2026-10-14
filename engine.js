@@ -4,7 +4,7 @@
 // warm-up before and a look-ahead after each, so carried positions stay correct) and returns
 // only the finished results. Any range, even 10 years, without loading data into the browser.
 //   GET  /health          -> {ok:true}
-//   POST /run {kind, params}  kind = cross_expiry | breakdown | time_based | compare | compare_all  -> {id}
+//   POST /run {kind, params}  kind = cross_expiry | breakdown | time_based | compare | compare_all | compare_ce  -> {id}
 //   GET  /job/<id>        -> {status: queued|running|done|error, progress, pct, result?}
 const http = require('http'), fs = require('fs'), vm = require('vm'), path = require('path');
 const BASE = process.env.KITE_DIR || '/root/kite';
@@ -152,7 +152,9 @@ async function runJob(job) {
   const segs = segments(from, to);
   const ce = { trades: [], daily: new Map(), byInst: new Map(), costs: 0, carrySkips: 0 };
   const dy = { trades: [], daily: [], costs: 0, carrySkips: 0 };
-  const RBM = ['carry', 'hold', 'sq14', 'roll14'];
+  const RBM = ['carry', 'sq14', 'roll14'];
+  const CEM = ['sq14', 'roll1525', 'roll1003'];
+  const ces = {}; for (const m of CEM) ces[m] = { trades: [], daily: new Map(), costs: 0, carrySkips: 0 };
   const dys = {}; for (const m of RBM) dys[m] = { trades: [], daily: [], costs: 0, carrySkips: 0 };
   const rbParams = (kind === 'compare' || kind === 'compare_all')
     ? Object.assign({}, p, { strategy: 'breakdown', reentryMode: 'original', reentrySL: 'samesl', maxReentries: 50, carry: 'nextday' })
@@ -173,7 +175,10 @@ async function runJob(job) {
       ce.trades.push(...r.trades); mergeDaily(ce.daily, r.daily, from, to, false); mergeDaily(ce.byInst, r.byInst, from, to, true);
       ce.costs += r.costs; ce.carrySkips += r.carrySkips;
     }
-    if (kind === 'compare_all') {
+    if (kind === 'compare_ce') {
+      for (const m of CEM) { const r = ctx.__H.ce(Object.assign({}, p, { ceMode: m }), S, E, warmS, lookE), c = ces[m];
+        c.trades.push(...r.trades); mergeDaily(c.daily, r.daily, from, to, false); c.costs += r.costs; c.carrySkips += r.carrySkips; }
+    } else if (kind === 'compare_all') {
       for (const m of RBM) { const r = ctx.__H.day(Object.assign({}, rbParams, { rbExpMode: m }), S, E), d = dys[m];
         d.trades.push(...r.trades); d.daily.push(...r.daily); d.costs += r.costs; d.carrySkips += r.carrySkips; }
     } else if (kind !== 'cross_expiry') {
@@ -185,6 +190,7 @@ async function runJob(job) {
   ctx.__H.reset(null, null);
   const ceRes = () => ({ trades: ce.trades, dailyPnl: finish(ce.daily), dailyPnlByInst: finish(ce.byInst), costs: ce.costs, carrySkips: ce.carrySkips });
   const dyRes = () => ({ trades: dy.trades, dailyPnl: dy.daily, costs: dy.costs, carrySkips: dy.carrySkips });
+  if (kind === 'compare_ce') { const ce3 = {}; for (const m of CEM) ce3[m] = { trades: ces[m].trades, dailyPnl: finish(ces[m].daily), costs: ces[m].costs, carrySkips: ces[m].carrySkips }; return { ce3 }; }
   if (kind === 'compare') return { ce: ceRes(), rb: dyRes() };
   if (kind === 'compare_all') { const rb = {}; for (const m of RBM) rb[m] = { trades: dys[m].trades, dailyPnl: dys[m].daily, costs: dys[m].costs, carrySkips: dys[m].carrySkips }; return { ce: ceRes(), rb }; }
   return kind === 'cross_expiry' ? ceRes() : dyRes();
@@ -205,7 +211,7 @@ function serve() {
       let body = ''; req.on('data', c => { body += c; if (body.length > 1e6) req.destroy(); });
       req.on('end', () => {
         let q; try { q = JSON.parse(body); } catch (e) { return send(res, 400, { error: 'bad json' }); }
-        if (!['cross_expiry', 'breakdown', 'time_based', 'compare', 'compare_all'].includes(q.kind) || !q.params) return send(res, 400, { error: 'bad request' });
+        if (!['cross_expiry', 'breakdown', 'time_based', 'compare', 'compare_all', 'compare_ce'].includes(q.kind) || !q.params) return send(res, 400, { error: 'bad request' });
         const id = (++seq).toString(36) + Date.now().toString(36);
         const job = { id, kind: q.kind, params: q.params, status: 'queued', progress: 'queued', pct: 0, t: Date.now() };
         jobs.set(id, job);
