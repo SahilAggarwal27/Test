@@ -78,8 +78,9 @@ JS = r"""
   async function runCompareAll(){
     const base = buildParams();
     if (!base.dateFrom || !base.dateTo) { $('status').textContent = 'Pick From and To dates first.'; return; }
-    if ($('strategy').value === 'compare_ce') return runCE3(base);
-    const only = $('strategy').value === 'compare_rb' ? ['carry','sq14'] : null;   // RB 15:25 vs RB 14:00 only
+    const kind = window.__cmpKind || $('strategy').value;   // set by the Scenario dropdown
+    if (kind === 'compare_ce') return runCE3(base);
+    const only = kind === 'compare_rb' ? ['carry','sq14'] : null;   // RB 15:25 vs RB 14:00 only
     const pick = list => only ? list.filter(x => only.includes(x.m)) : list;
     if (!base.dateFrom || !base.dateTo) { $('status').textContent = 'Pick From and To dates first.'; return; }
     if (window.__srvOK && window.__srvRun) {
