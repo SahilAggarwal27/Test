@@ -4,8 +4,8 @@
 #  roll1525 = 2) at 14:00 open the next-expiry position (other index) and square it at 15:25 (exit time)
 #  roll1003 = 3) at 14:00 open the next-expiry position, carry it, square next trading day at 10:03
 # Next-expiry position = "assume the morning trigger": on the next-expiry contract (ATM at 10:03) run the
-# 10:03 morning-trigger logic up to 14:00; the side live at 14:00 is taken, entry price = that side's
-# 10:03 candle low (the trigger price), SL = its 09:20-10:03 high (15:15 freeze on Tue/Thu).
+# 10:03 morning-trigger logic up to 14:00; the side live at 14:00 is taken and SOLD AT THE ACTUAL 14:00
+# MARKET PRICE (as tradable live), SL = its 09:20-10:03 high (15:15 freeze on Tue/Thu).
 # Strategy dropdown rebuilt: old Cross Expiry / Compare-with-Cross-Expiry options removed.
 import io, os, re, sys, shutil
 P = os.environ.get("BT_HTML", "backtester.html")
@@ -27,8 +27,7 @@ s = s.replace(A1,
 A2 = "            pos={inst:nxt, side, strike, exp:nexp, et:eb.time, ep:eb.p, sl, entryDate:date};\n"
 must(A2)
 s = s.replace(A2,
-"            const a0=ceLeg(date, nxt, strike, nexp, side).find(r=>r.time===MORN);   // morning trigger price = 10:03 candle low\n"
-"            pos={inst:nxt, side, strike, exp:nexp, et:eb.time, ep:(a0 ? a0.l : eb.p), sl, entryDate:date};\n")
+"            pos={inst:nxt, side, strike, exp:nexp, et:eb.time, ep:eb.p, sl, entryDate:date};   // entry = actual 2 PM market price\n")
 # 2) entry-day scan: scenario 2 squares at the exit time (15:25)
 A3 = ("            for(const r of ceLeg(date, nxt, strike, nexp, side)){ const m=parseTime(r.time);\n"
       "              if(m<E || m>CLOSE) continue;\n"
