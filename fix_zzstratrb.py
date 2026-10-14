@@ -15,8 +15,7 @@ for a in (B, C, W, A):
     if s.count(a) != 1:
         print("ABORT: anchor not found: " + a[:60]); sys.exit(1)
 V = [('sq14', 'Tue/Thu square 14:00'), ('roll14', 'Tue/Thu 14:00 roll (Cross Expiry logic, exit next day 10:03)')]
-s = s.replace(B, B.replace('<option ', '<option data-rb="carry" ') +
-              ''.join('      <option value="breakdown" data-rb="%s">Range Breakout \u2014 %s</option>\n' % v for v in V))
+s = s.replace(B, B.replace('<option ', '<option data-rb="carry" '))   # standalone RB 14:00 / 14:00-roll options removed (in Compare only)
 s = s.replace(C, C.replace('<option ', '<option data-rb="carry" ') +
               ''.join('      <option value="compare" data-rb="%s">\u2696\ufe0f Compare: Cross Expiry vs Range Breakout \u2014 %s</option>\n' % v for v in V))
 s = s.replace(W, W.replace('<div style="margin-top:8px">', '<div id="rbExpWrap" style="display:none;margin-top:8px">'))
