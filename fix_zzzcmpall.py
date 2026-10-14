@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # "Compare ALL": Cross Expiry + all Range Breakout Tue/Thu variants on the same dates, one screen:
 # KPI table (best per row highlighted), all equity curves on one chart, day-by-day table.
+# Also "Compare: Range Breakout Tue/Thu square 15:25 vs 14:00" (two RB columns only).
 # Runs on the server engine (kind compare_all, one data pass) when connected, else in the browser.
 import io, os, sys, shutil
 P = os.environ.get("BT_HTML", "backtester.html")
@@ -13,7 +14,8 @@ A = "</script>\n</body>"
 key = O if s.count(O) == 1 else O2
 if s.count(key) != 1 or s.count(A) != 1 or "function cmpStats" not in s:
     print("ABORT: anchor not found."); sys.exit(1)
-s = s.replace(key, '      <option value="compare_all">\u2696\ufe0f Compare ALL: Cross Expiry vs all Range Breakout Tue/Thu variants</option>\n' + key)
+s = s.replace(key, '      <option value="compare_all">\u2696\ufe0f Compare ALL: Cross Expiry vs all Range Breakout Tue/Thu variants</option>\n'
+                   '      <option value="compare_rb">\u2696\ufe0f Compare: Range Breakout \u2014 Tue/Thu square 15:25 vs 14:00</option>\n' + key)
 JS = r"""
 /*CMPALL*/
 (function(){
@@ -57,13 +59,15 @@ JS = r"""
   }
   async function runCompareAll(){
     const base = buildParams();
+    const only = $('strategy').value === 'compare_rb' ? ['carry','sq14'] : null;   // RB 15:25 vs RB 14:00 only
+    const pick = list => only ? list.filter(x => only.includes(x.m)) : list;
     if (!base.dateFrom || !base.dateTo) { $('status').textContent = 'Pick From and To dates first.'; return; }
     if (window.__srvOK && window.__srvRun) {
       try {
         const res = await window.__srvRun('compare_all', base);
         if (res && res.rb && res.rb.carry) {
-          renderAll([{name:'Cross Expiry', st:cmpStats(res.ce)}].concat(MODES.map(([m,nm]) => ({name:nm, st:cmpStats(res.rb[m])}))), base);
-          $('status').textContent = 'Compare ALL done on server \u00b7 ' + fmtD(base.dateFrom) + ' \u2192 ' + fmtD(base.dateTo); return;
+          renderAll(pick([{m:'ce', name:'Cross Expiry', st:cmpStats(res.ce)}].concat(MODES.map(([m,nm]) => ({m, name:nm, st:cmpStats(res.rb[m])})))), base);
+          $('status').textContent = 'Compare done on server \u00b7 ' + fmtD(base.dateFrom) + ' \u2192 ' + fmtD(base.dateTo); return;
         }
         throw new Error('engine not updated yet');
       } catch (e) { console.error(e); $('status').textContent = 'Server: ' + e.message + ' \u2014 running in browser\u2026'; }
@@ -73,18 +77,19 @@ JS = r"""
     $('status').textContent = 'Running all strategies\u2026';
     setTimeout(() => {
       try {
-        const list = [{name:'Cross Expiry', st:cmpStats(runBacktestCrossExpiry({...base, strategy:'cross_expiry'}))}]
-          .concat(MODES.map(([m,nm]) => ({name:nm, st:cmpStats(runBacktest(rbP(base, m)))})));
+        const list = (only ? [] : [{m:'ce', name:'Cross Expiry', st:cmpStats(runBacktestCrossExpiry({...base, strategy:'cross_expiry'}))}])
+          .concat(MODES.filter(([m]) => !only || only.includes(m)).map(([m,nm]) => ({m, name:nm, st:cmpStats(runBacktest(rbP(base, m)))})));
         renderAll(list, base);
-        $('status').textContent = 'Compare ALL done \u00b7 ' + fmtD(base.dateFrom) + ' \u2192 ' + fmtD(base.dateTo);
+        $('status').textContent = 'Compare done \u00b7 ' + fmtD(base.dateFrom) + ' \u2192 ' + fmtD(base.dateTo);
       } catch (e) { console.error(e); $('status').textContent = 'Error: ' + e.message; }
     }, 50);
   }
   window.runCompareAll = runCompareAll;
   const sel = $('strategy');
-  const ui = () => { if (sel.value === 'compare_all') { $('rangeFields').style.display='block'; $('timeFields').style.display='none'; $('slField').style.display='none'; $('slNote').style.display='none'; } };
+  const isAll = () => sel.value === 'compare_all' || sel.value === 'compare_rb';
+  const ui = () => { if (isAll()) { $('rangeFields').style.display='block'; $('timeFields').style.display='none'; $('slField').style.display='none'; $('slNote').style.display='none'; } };
   sel.addEventListener('change', ui); ui();
-  $('runBtn').addEventListener('click', (e) => { if (sel.value === 'compare_all') { e.stopImmediatePropagation(); runCompareAll(); } }, true);
+  $('runBtn').addEventListener('click', (e) => { if (isAll()) { e.stopImmediatePropagation(); runCompareAll(); } }, true);
 })();
 """
 s = s.replace(A, JS + A)
