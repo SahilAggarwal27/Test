@@ -4,15 +4,15 @@
 // warm-up before and a look-ahead after each, so carried positions stay correct) and returns
 // only the finished results. Any range, even 10 years, without loading data into the browser.
 //   GET  /health          -> {ok:true}
-//   POST /run {kind, params}  kind = cross_expiry | breakdown | time_based | compare | compare_all | compare_ce  -> {id}
+//   POST /run {kind, params}  kind = cross_expiry | breakdown | time_based | compare | compare_all | compare_ce | compare_vix  -> {id}
 //   GET  /job/<id>        -> {status: queued|running|done|error, progress, pct, result?}
-const http = require('http'), fs = require('fs'), vm = require('vm'), path = require('path');
+const http = require('http'), https = require('https'), fs = require('fs'), vm = require('vm'), path = require('path');
 const BASE = process.env.KITE_DIR || '/root/kite';
 const PAGE = process.env.BT_PAGE || path.join(BASE, 'backtester.html');
 const SLICE = process.env.SLICE_URL || 'http://127.0.0.1:8080/slice';
 const PORT = +(process.env.ENGINE_PORT || 8090);
 const SEG_DAYS = 31, WARM = 10, LOOK = 12, CHUNK = 14;
-const VERSION = 'engine-1';
+const VERSION = 'engine-2-vix';
 
 // ---------- page code in a sandbox with a do-nothing DOM ----------
 function makeFake() {
@@ -46,8 +46,9 @@ var __H = {
     const r = runBacktestCrossExpiry(Object.assign({}, p, {strategy:'cross_expiry', dateFrom: warmS, dateTo: lookE}));
     const kept = r.trades.filter(t => t.date >= S && t.date <= E);
     const mp = Object.assign({}, p, {dateFrom: S, dateTo: lookE});
+    const reg = {}; for (const d in (r.regimeLog || {})) if (d >= S && d <= E) reg[d] = r.regimeLog[d];
     return { trades: kept, daily: ceMtmDaily({trades: kept}, mp, false), byInst: ceMtmDaily({trades: kept}, mp, true),
-             costs: __H.costOf(kept, p), carrySkips: r.carrySkips || 0 };
+             costs: __H.costOf(kept, p), carrySkips: r.carrySkips || 0, regime: reg };
   },
   day(p, S, E){
     const r = runBacktest(Object.assign({}, p, {dateFrom: S, dateTo: E}));
@@ -125,6 +126,78 @@ async function loadSources(ctx, from, to, prog) {
   if (ov(live)) ctx.__H.ingest(parseCsv(fs.readFileSync(live, 'utf8')));
 }
 
+
+// ---------- India VIX (for the VIX regime entry) ----------
+// Per trading day: the collected 09:20 value (vix_live_data.csv) where available, else the PREVIOUS day's
+// close from Yahoo ^INDIAVIX (known before the open -> no look-ahead). Cached in vix_daily.csv, refreshed every 6h.
+const VIX_FILE = path.join(BASE, 'vix_daily.csv');
+let VIX_CACHE = null, VIX_SRC = '';
+function getJson(url) {
+  return new Promise((res, rej) => {
+    https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 30000 }, r => {
+      if (r.statusCode !== 200) { r.resume(); return rej(new Error('HTTP ' + r.statusCode)); }
+      const c = []; r.on('data', x => c.push(x)); r.on('end', () => { try { res(JSON.parse(Buffer.concat(c).toString())); } catch (e) { rej(e); } });
+    }).on('error', rej).on('timeout', function () { this.destroy(new Error('timeout')); });
+  });
+}
+function liveVix0920() {   // {date: value at ~09:20} from the live VIX collector, whatever its column names are
+  const out = {};
+  for (const f of [path.join(BASE, 'vix_live_data.csv'), path.join(BASE, 'data', 'vix_live_data.csv')]) {
+    if (!fs.existsSync(f)) continue;
+    try {
+      const rows = parseCsv(fs.readFileSync(f, 'utf8')); if (!rows.length) continue;
+      const keys = Object.keys(rows[0]), low = keys.map(k => k.toLowerCase());
+      const dk = keys[low.findIndex(k => /datetime|timestamp/.test(k))] || keys[low.findIndex(k => k === 'date')];
+      const tk = keys[low.findIndex(k => k === 'time')];
+      const vk = keys[low.findIndex(k => ['ltp', 'last_price', 'vix', 'close', 'price', 'value'].includes(k))];
+      if (!dk || !vk) continue;
+      for (const r of rows) {
+        const ds = String(r[dk] || ''), d = ds.slice(0, 10), t = tk ? String(r[tk] || '') : (ds.match(/\d{2}:\d{2}/) || [''])[0];
+        const v = +r[vk]; if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !(v > 0) || !t) continue;
+        if (t.slice(0, 5) >= '09:20' && t.slice(0, 5) <= '09:25' && out[d] == null) out[d] = v;
+      }
+    } catch (e) { console.error('live vix', e.message); }
+  }
+  return out;
+}
+async function ensureVix() {
+  try { if (VIX_CACHE && fs.existsSync(VIX_FILE) && Date.now() - fs.statSync(VIX_FILE).mtimeMs < 6 * 3600e3) return VIX_CACHE; } catch (e) {}
+  const map = {}; let src = [];
+  try {
+    const j = await getJson('https://query1.finance.yahoo.com/v8/finance/chart/%5EINDIAVIX?period1=1199145600&period2=' + Math.floor(Date.now() / 1000 + 86400) + '&interval=1d');
+    const r = j.chart.result[0], ts = r.timestamp, cl = r.indicators.quote[0].close;
+    let prev = null;
+    for (let i = 0; i < ts.length; i++) {
+      const d = new Date((ts[i] + 19800) * 1000).toISOString().slice(0, 10);
+      if (prev != null) map[d] = prev;
+      if (cl[i] != null) prev = cl[i];
+    }
+    src.push('prev close (Yahoo) ' + Object.keys(map).length + ' days');
+  } catch (e) {
+    console.error('vix download failed', e.message);
+    if (fs.existsSync(VIX_FILE)) { for (const r of parseCsv(fs.readFileSync(VIX_FILE, 'utf8'))) if (r.date && r.vix > 0) map[r.date] = +r.vix; src.push('cached file'); }
+  }
+  const lv = liveVix0920(), nl = Object.keys(lv).length;
+  Object.assign(map, lv); if (nl) src.push('live 09:20 ' + nl + ' days');
+  const days = Object.keys(map).sort();
+  if (days.length) { try { fs.writeFileSync(VIX_FILE, 'date,vix\n' + days.map(d => d + ',' + (+map[d]).toFixed(2)).join('\n') + '\n'); } catch (e) {} }
+  VIX_CACHE = map; VIX_SRC = src.join(' + ') || 'none';
+  return map;
+}
+const tShift = (t, m) => { const [h, mi] = t.split(':').map(Number), x = h * 60 + mi + m; return String(Math.floor(x / 60)).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0'); };
+function vixVariants(p) {
+  const lo = +(p.vixLo != null ? p.vixLo : 14), tMid = p.vixTimeMid || '09:40';
+  return {
+    base: { vixMode: 'fixed', vixFixedTime: '10:05' },
+    fixed0940: { vixMode: 'fixed', vixFixedTime: tMid },
+    switch: { vixMode: 'switch' },
+    lo_m1: { vixMode: 'switch', vixLo: lo - 1 },
+    lo_p1: { vixMode: 'switch', vixLo: lo + 1 },
+    t_m5: { vixMode: 'switch', vixTimeMid: tShift(tMid, -5) },
+    t_p10: { vixMode: 'switch', vixTimeMid: tShift(tMid, 10) },
+  };
+}
+
 // ---------- job ----------
 function segments(from, to) {
   const out = []; let a = from;
@@ -149,7 +222,10 @@ async function runJob(job) {
   const { kind } = job, p = job.params, from = p.dateFrom, to = p.dateTo;
   if (!from || !to || from > to) throw new Error('bad date range');
   const ctx = newContext();
+  try { ctx.VIX_DAY = await ensureVix(); } catch (e) { console.error('vix', e); ctx.VIX_DAY = {}; }
   const segs = segments(from, to);
+  const VXV = kind === 'compare_vix' ? vixVariants(p) : null;
+  const vxs = {}; if (VXV) for (const k in VXV) vxs[k] = { trades: [], daily: new Map(), costs: 0, carrySkips: 0, regime: {} };
   const ce = { trades: [], daily: new Map(), byInst: new Map(), costs: 0, carrySkips: 0 };
   const dy = { trades: [], daily: [], costs: 0, carrySkips: 0 };
   const RBM = ['carry', 'sq14', 'roll14'];
@@ -175,13 +251,16 @@ async function runJob(job) {
       ce.trades.push(...r.trades); mergeDaily(ce.daily, r.daily, from, to, false); mergeDaily(ce.byInst, r.byInst, from, to, true);
       ce.costs += r.costs; ce.carrySkips += r.carrySkips;
     }
-    if (kind === 'compare_ce') {
+    if (kind === 'compare_vix') {
+      for (const k in VXV) { const r = ctx.__H.ce(Object.assign({}, p, { ceMode: p.ceMode || 'live' }, VXV[k]), S, E, warmS, lookE), c = vxs[k];
+        c.trades.push(...r.trades); mergeDaily(c.daily, r.daily, from, to, false); c.costs += r.costs; c.carrySkips += r.carrySkips; Object.assign(c.regime, r.regime); }
+    } else if (kind === 'compare_ce') {
       for (const m of CEM) { const r = ctx.__H.ce(Object.assign({}, p, { ceMode: m }), S, E, warmS, lookE), c = ces[m];
         c.trades.push(...r.trades); mergeDaily(c.daily, r.daily, from, to, false); c.costs += r.costs; c.carrySkips += r.carrySkips; }
     } else if (kind === 'compare_all') {
       for (const m of RBM) { const r = ctx.__H.day(Object.assign({}, rbParams, { rbExpMode: m }), S, E), d = dys[m];
         d.trades.push(...r.trades); d.daily.push(...r.daily); d.costs += r.costs; d.carrySkips += r.carrySkips; }
-    } else if (kind !== 'cross_expiry') {
+    } else if (kind !== 'cross_expiry' && kind !== 'compare_vix') {
       const r = ctx.__H.day(rbParams, S, E);
       dy.trades.push(...r.trades); dy.daily.push(...r.daily); dy.costs += r.costs; dy.carrySkips += r.carrySkips;
     }
@@ -190,6 +269,11 @@ async function runJob(job) {
   ctx.__H.reset(null, null);
   const ceRes = () => ({ trades: ce.trades, dailyPnl: finish(ce.daily), dailyPnlByInst: finish(ce.byInst), costs: ce.costs, carrySkips: ce.carrySkips });
   const dyRes = () => ({ trades: dy.trades, dailyPnl: dy.daily, costs: dy.costs, carrySkips: dy.carrySkips });
+  if (kind === 'compare_vix') {
+    const vx = {}; for (const k in vxs) vx[k] = { trades: vxs[k].trades, dailyPnl: finish(vxs[k].daily), costs: vxs[k].costs, carrySkips: vxs[k].carrySkips, regime: vxs[k].regime };
+    const vix = {}; for (const d in (ctx.VIX_DAY || {})) if (d >= from && d <= to) vix[d] = ctx.VIX_DAY[d];
+    return { vx, vix, vixSrc: VIX_SRC, split: '2025-01-01' };
+  }
   if (kind === 'compare_ce') { const ce3 = {}; for (const m of CEM) ce3[m] = { trades: ces[m].trades, dailyPnl: finish(ces[m].daily), costs: ces[m].costs, carrySkips: ces[m].carrySkips }; return { ce3 }; }
   if (kind === 'compare') return { ce: ceRes(), rb: dyRes() };
   if (kind === 'compare_all') { const rb = {}; for (const m of RBM) rb[m] = { trades: dys[m].trades, dailyPnl: dys[m].daily, costs: dys[m].costs, carrySkips: dys[m].carrySkips }; return { ce: ceRes(), rb }; }
@@ -211,7 +295,7 @@ function serve() {
       let body = ''; req.on('data', c => { body += c; if (body.length > 1e6) req.destroy(); });
       req.on('end', () => {
         let q; try { q = JSON.parse(body); } catch (e) { return send(res, 400, { error: 'bad json' }); }
-        if (!['cross_expiry', 'breakdown', 'time_based', 'compare', 'compare_all', 'compare_ce'].includes(q.kind) || !q.params) return send(res, 400, { error: 'bad request' });
+        if (!['cross_expiry', 'breakdown', 'time_based', 'compare', 'compare_all', 'compare_ce', 'compare_vix'].includes(q.kind) || !q.params) return send(res, 400, { error: 'bad request' });
         const id = (++seq).toString(36) + Date.now().toString(36);
         const job = { id, kind: q.kind, params: q.params, status: 'queued', progress: 'queued', pct: 0, t: Date.now() };
         jobs.set(id, job);
